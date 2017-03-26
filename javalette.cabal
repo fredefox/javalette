@@ -21,8 +21,11 @@ library
                      , Javalette.Syntax.ParJavalette
                      , Javalette.Syntax.PrintJavalette
                      , Javalette.Syntax.SkelJavalette
-  build-depends:       base >= 4.7 && < 5
-                     , array
+                     , Javalette.TypeChecking
+  build-depends:       array
+                     , base >= 4.7 && < 5
+                     , mtl >= 2.2.1
+                     , containers >= 0.5.7
   default-language:    Haskell2010
 
 executable javalette
