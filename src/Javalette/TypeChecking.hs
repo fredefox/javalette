@@ -257,9 +257,15 @@ instance Infer Expr where
       return t
     EMul e0 _ e1 -> checkBinOp isNumeric e0 e1
     EAdd e0 _ e1 -> checkBinOp isNumeric e0 e1
-    ERel e0 _ e1 -> checkBinOp isNumeric e0 e1 >> return AST.Bool
+    ERel e0 op e1 -> checkRel op e0 e1 >> return AST.Bool
     EAnd e0 e1 -> checkBinOp (== AST.Bool) e0 e1
     EOr e0 e1 -> checkBinOp (== AST.Bool) e0 e1
+
+checkRel :: RelOp -> Expr -> Expr -> TypeChecker ()
+checkRel _ e0 e1 = do
+  t0 <- infer e0
+  t1 <- infer e1
+  unless (t0 == t1) throwMixErr
 
 checkBinOp :: (Type -> Bool) -> Expr -> Expr -> TypeChecker Type
 checkBinOp p e0 e1 = do
