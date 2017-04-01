@@ -1,7 +1,7 @@
 all: Grade
 
 Grade: *.hs
-	ghc -threaded --make Grade.hs
+	stack ghc -- -threaded --make Grade.hs
 clean:
 	rm -f *.{hi,o} Grade
 
