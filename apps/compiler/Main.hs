@@ -5,12 +5,16 @@ import System.Environment
 
 import Javalette.Syntax.AbsJavalette
 import Javalette.Parser ( parse )
+import qualified Javalette.TypeChecking as TypeChecking
+import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 
 main :: IO ()
 main = do
   inp <- parseInput
-  case parseProgram inp of
-    Left{}  -> putStrLnErr "BAD"
+  case compile inp of
+    Left err  -> do
+      putStrLnErr "BAD"
+      print err
     Right{} -> putStrLnErr "OK"
 
 -- TODO: We might like to do something more fancy (e.g. using
@@ -20,8 +24,24 @@ main = do
 parseInput :: IO String
 parseInput = head <$> getArgs >>= readFile
 
-parseProgram :: String -> Either String Prog
-parseProgram = parse
+data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
+
+compile :: String -> Either CompilerErr ()
+compile s = do
+  p <- parseProgram s
+  typecheck p
+
+typecheck :: TypeCheck a => a -> Either CompilerErr ()
+typecheck = inLeft TypeErr
+  . TypeChecking.evalTypeChecker
+  . TypeChecking.typecheck
+
+parseProgram :: String -> Either CompilerErr Prog
+parseProgram s = inLeft ParseErr (parse s)
 
 putStrLnErr :: String -> IO ()
 putStrLnErr = hPutStrLn stderr
+
+inLeft :: (a -> c) -> Either a b -> Either c b
+inLeft f (Left a)    = Left (f a)
+inLeft _ (Right a)   = Right a

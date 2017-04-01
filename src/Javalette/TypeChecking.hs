@@ -2,6 +2,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 module Javalette.TypeChecking
   ( runTypeChecker
+  , evalTypeChecker
   , TypeChecker()
   , TypeCheck(..)
   , TypeCheckingError(..)
@@ -26,6 +27,7 @@ data TypeCheckingError
   | NoReturnStatement
   | Undef
   | GenericError String
+  deriving (Show)
 
 -- * Type- checking and -inference
 
@@ -51,13 +53,16 @@ class TypeCheck a => Infer a where
 
 data Env = Env
   { envVars :: [Map Ident Type]
-  , envDefs :: Map Ident TopDef
+  , envDefs :: Definitions
   }
+
+type Definitions = Map Ident Definition
+data Definition = DefWiredIn WiredIn | Def TopDef
 
 modifyVars :: ([Map Ident Type] -> [Map Ident Type]) -> Env -> Env
 modifyVars f e = e { envVars = f (envVars e) }
 
-modifyDefs :: (Map Ident TopDef -> Map Ident TopDef) -> Env -> Env
+modifyDefs :: (Definitions -> Definitions) -> Env -> Env
 modifyDefs f e = e { envDefs = f (envDefs e) }
 
 type TypeChecker a = StateT Env (Except TypeCheckingError) a
@@ -65,16 +70,40 @@ type TypeChecker a = StateT Env (Except TypeCheckingError) a
 runTypeChecker
   :: TypeChecker a
   -> Either TypeCheckingError (a, Env)
-runTypeChecker t = runExcept . runStateT t $ emptyEnv
+runTypeChecker t = runExcept . runStateT t $ initEnv
 
-emptyEnv :: Env
-emptyEnv = Env [] M.empty
+evalTypeChecker :: TypeChecker a -> Either TypeCheckingError a
+evalTypeChecker t = runExcept . evalStateT t $ initEnv
+
+initEnv :: Env
+initEnv = Env
+  { envVars = []
+  , envDefs = wiredInDefs
+  }
+
+data WiredIn = WiredIn
+  { wiredInType :: Type
+  , wiredInArgs :: [Arg]
+  , wiredInIdent :: Ident
+  }
+
+wiredInDefs :: Definitions
+wiredInDefs = M.fromList
+  [ "printInt"    |-> WiredIn Void       [Argument AST.Int   (Ident "_")] (Ident "printInt")
+  , "printDouble" |-> WiredIn Void       [Argument AST.Doub  (Ident "_")] (Ident "printDouble")
+  -- TODO: The `string` type does not exist in `AST`.
+  , "printString" |-> WiredIn Void       [Argument AST.String (Ident "_")] (Ident "printString")
+  , "readInt"     |-> WiredIn (AST.Int)  []                               (Ident "readInt")
+  , "readDouble"  |-> WiredIn (AST.Doub) []                               (Ident "readDouble")
+  ]
+  where
+    i |-> def = (Ident i, DefWiredIn def)
 
 newScope :: TypeChecker ()
 newScope = modify (modifyVars $ \xs -> M.empty : xs)
 
-putFuns :: Map Ident TopDef -> TypeChecker ()
-putFuns defs = modify (modifyDefs $ const defs)
+unionDefs :: Definitions -> TypeChecker ()
+unionDefs defs = modify (modifyDefs $ M.union defs)
 
 addBinding :: Ident -> Type -> TypeChecker ()
 addBinding i t = do
@@ -91,12 +120,12 @@ addArgs = addBindings . map identAndType
   where
     identAndType (Argument t i) = (i, t)
 
-mkFunEnv :: [TopDef] -> Map Ident TopDef
-mkFunEnv = M.fromList . map (\def@(FnDef _ i _ _) -> (i, def))
+mkFunEnv :: [TopDef] -> Definitions
+mkFunEnv = M.fromList . map (\def@(FnDef _ i _ _) -> (i, Def def))
 
 instance TypeCheck Prog where
   typecheck (Program defs)
-    =  putFuns (mkFunEnv defs)
+    =  unionDefs (mkFunEnv defs)
     >> mapM_ typecheck defs
 
 instance TypeCheck TopDef where
@@ -149,10 +178,7 @@ typecheckStmt t s = case s of
   While e s0 -> do
     inferBoolean e
     typecheckStmt t s0
-  SExp e -> do
-    te <- infer e
-    unless (te == t)
-      $ throwError TypeMismatch
+  SExp e -> typecheck e
 
 inferBoolean :: Expr -> TypeChecker ()
 inferBoolean e = do
@@ -175,10 +201,17 @@ lookupTypeVar i = do
         Nothing -> firstMatch ms
         Just t  -> Just t
 
-lookupFun :: Ident -> TypeChecker TopDef
+lookupFun :: Ident -> TypeChecker Definition
 lookupFun i = do
   t <- M.lookup i . envDefs <$> get
   maybeToError Undef t
+
+lookupFunTypeAndArgs :: Ident -> TypeChecker (Type, [Arg])
+lookupFunTypeAndArgs i = typeAndArgs <$> lookupFun i
+  where
+    typeAndArgs def = case def of
+      DefWiredIn (WiredIn t args _) -> (t, args)
+      Def (FnDef t _ args _)        -> (t, args)
 
 itemIdent :: Item -> Ident
 itemIdent itm = case itm of
@@ -208,12 +241,10 @@ instance Infer Expr where
     ELitTrue -> return AST.Bool
     ELitFalse -> return AST.Bool
     EApp i exprs -> do
-      (FnDef t _ args _) <- lookupFun i
+      (t, args) <- lookupFunTypeAndArgs i
       argsMatch exprs args
       return t
-    EString{} -> throwError $ GenericError
-      $ "Strings do strangely not have a type.\n"
-      ++ "They can only be used in calls of primitive function printString."
+    EString{} -> return AST.String
     Neg e0 -> do
       t <- infer e0
       unless (isNumeric t)
