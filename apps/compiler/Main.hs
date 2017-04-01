@@ -13,7 +13,7 @@ main = do
   inp <- parseInput
   case compile inp of
     Left err  -> do
-      putStrLnErr "BAD"
+      putStrLnErr "ERROR"
       print err
     Right{} -> putStrLnErr "OK"
 
