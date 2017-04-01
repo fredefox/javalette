@@ -22,6 +22,7 @@ library
                      , Javalette.Syntax.PrintJavalette
                      , Javalette.Syntax.SkelJavalette
                      , Javalette.TypeChecking
+                     , Javalette.Parser
                      , Javalette.Parser.Main
   build-depends:       array
                      , base >= 4.7 && < 5
