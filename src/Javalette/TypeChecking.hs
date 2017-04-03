@@ -89,12 +89,11 @@ data WiredIn = WiredIn
 
 wiredInDefs :: Definitions
 wiredInDefs = M.fromList
-  [ "printInt"    |-> WiredIn Void       [Argument AST.Int   (Ident "_")] (Ident "printInt")
-  , "printDouble" |-> WiredIn Void       [Argument AST.Doub  (Ident "_")] (Ident "printDouble")
-  -- TODO: The `string` type does not exist in `AST`.
-  , "printString" |-> WiredIn Void       [Argument AST.String (Ident "_")] (Ident "printString")
-  , "readInt"     |-> WiredIn (AST.Int)  []                               (Ident "readInt")
-  , "readDouble"  |-> WiredIn (AST.Doub) []                               (Ident "readDouble")
+  [ "printInt"    |-> WiredIn Void      [Argument AST.Int    (Ident "_")] (Ident "printInt")
+  , "printDouble" |-> WiredIn Void      [Argument AST.Doub   (Ident "_")] (Ident "printDouble")
+  , "printString" |-> WiredIn Void      [Argument AST.String (Ident "_")] (Ident "printString")
+  , "readInt"     |-> WiredIn AST.Int   []                                (Ident "readInt")
+  , "readDouble"  |-> WiredIn AST.Doub  []                                (Ident "readDouble")
   ]
   where
     i |-> def = (Ident i, DefWiredIn def)
