@@ -7,6 +7,7 @@ module Javalette.TypeChecking
   , TypeCheck(..)
   , TypeCheckingError(..)
   , Infer(..)
+  , staticControlFlowCheck
   ) where
 
 import Data.Map (Map)
@@ -89,12 +90,11 @@ data WiredIn = WiredIn
 
 wiredInDefs :: Definitions
 wiredInDefs = M.fromList
-  [ "printInt"    |-> WiredIn Void       [Argument AST.Int   (Ident "_")] (Ident "printInt")
-  , "printDouble" |-> WiredIn Void       [Argument AST.Doub  (Ident "_")] (Ident "printDouble")
-  -- TODO: The `string` type does not exist in `AST`.
-  , "printString" |-> WiredIn Void       [Argument AST.String (Ident "_")] (Ident "printString")
-  , "readInt"     |-> WiredIn (AST.Int)  []                               (Ident "readInt")
-  , "readDouble"  |-> WiredIn (AST.Doub) []                               (Ident "readDouble")
+  [ "printInt"    |-> WiredIn Void      [Argument AST.Int    (Ident "_")] (Ident "printInt")
+  , "printDouble" |-> WiredIn Void      [Argument AST.Doub   (Ident "_")] (Ident "printDouble")
+  , "printString" |-> WiredIn Void      [Argument AST.String (Ident "_")] (Ident "printString")
+  , "readInt"     |-> WiredIn AST.Int   []                                (Ident "readInt")
+  , "readDouble"  |-> WiredIn AST.Doub  []                                (Ident "readDouble")
   ]
   where
     i |-> def = (Ident i, DefWiredIn def)
@@ -105,12 +105,25 @@ newScope = modify (modifyVars $ \xs -> M.empty : xs)
 unionDefs :: Definitions -> TypeChecker ()
 unionDefs defs = modify (modifyDefs $ M.union defs)
 
+-- It's an error if you bind to an already bound variable.
 addBinding :: Ident -> Type -> TypeChecker ()
 addBinding i t = do
   e <- get
   case envVars e of
     []      -> throwError EmptyEnvironment
-    x : xs  -> put $ e { envVars = M.insert i t x : xs }
+    x : xs  -> do
+      m <- insertMaybe i t x
+      put $ e { envVars = m : xs }
+
+insertMaybe
+  :: (Ord k, MonadError TypeCheckingError m)
+  => k
+  -> a
+  -> Map k a
+  -> m (Map k a)
+insertMaybe k a m = case M.lookup k m of
+  Nothing -> return $ M.insert k a m
+  Just{}  -> throwError (GenericError "Bind to bound var")
 
 addBindings :: [(Ident, Type)] -> TypeChecker ()
 addBindings = mapM_ (uncurry addBinding)
@@ -283,10 +296,177 @@ throwMixErr :: TypeChecker a
 throwMixErr = throwError $ GenericError "Plz, can't mix and match numerical values"
 
 argsMatch :: [Expr] -> [Arg] -> TypeChecker ()
-argsMatch = zipWithM_ argMatch
+argsMatch = zipWithMRagged_ (GenericError "Arg mismatch") argMatch
+
+-- | A version of `Control.Monad.zipWithM_` that rejects ragged lists with the
+-- specified error.
+zipWithMRagged_ :: MonadError e m => e -> (a -> b -> m c) -> [a] -> [b] -> m ()
+zipWithMRagged_ e _ [] ys = case ys of
+  [] -> return ()
+  _  -> throwError e
+zipWithMRagged_ e f (x : xs) ys = case ys of
+  []        -> throwError e
+  (y : yss) -> f x y >> zipWithMRagged_ e f xs yss
 
 argMatch :: Expr -> Arg -> TypeChecker ()
 argMatch e (Argument t _) = do
   t' <- infer e
   unless (t == t')
     $ throwError TypeMismatch
+
+------------------------------------------------------------
+-- * Static control flow checks
+------------------------------------------------------------
+-- TODO: This section should be moved to its own file I feel.
+
+staticControlFlowCheck :: Prog -> TypeChecker ()
+staticControlFlowCheck (Program defs) = do
+  _ <- unionDefs (mkFunEnv defs)
+  mapM_ staticControlFlowCheckDef defs
+
+staticControlFlowCheckDef
+  :: TopDef -> TypeChecker ()
+staticControlFlowCheckDef (FnDef t _ args blk) = do
+  _ <- newScope
+  _ <- addArgs args
+  ft <- inferBlk blk
+  case ft of
+    Always t' -> when (t /= t')       (throwError (GenericError "Inferred type doesn't match expected type"))
+    _         -> when (t /= AST.Void) (throwError (GenericError "Control-flow is out of whack you!"))
+
+inferStmt :: Stmt -> TypeChecker (Frequency Type)
+inferStmt s = case s of
+  Empty          -> return Never
+  BStmt blk      -> newScope >> inferBlk blk
+  Decl t0 its    -> do
+    addBindings $ map (\i -> (itemIdent i, t0)) its
+    return Never
+  Ass i e        -> do
+    assign i e
+    return Never
+  Incr i         -> incr i >> return Never
+  Decr i         -> decr i >> return Never
+  Ret e          -> Always <$> infer e
+  VRet           -> return (Always AST.Void)
+  Cond e s0      -> do
+    v <- staticValue e
+    case v of
+      (Just (ValBool True))  -> inferStmt s0
+      (Just (ValBool False)) -> return Never
+      Just{}                 -> throwError (GenericError "Impossible type-error")
+      Nothing      -> sometimes <$> inferStmt s0
+  CondElse e s0 s1 -> do
+    v <- staticValue e
+    case v of
+      (Just (ValBool True))  -> inferStmt s0
+      (Just (ValBool False)) -> inferStmt s1
+      (Just _)               -> throwError (GenericError "Impossible type-error")
+      Nothing                -> liftM2 least (inferStmt s0) (inferStmt s1)
+  While e s0 -> do
+    v <- staticValue e
+    case v of
+      (Just (ValBool True))  -> do
+        t <- inferStmt s0
+        case t of
+          Never -> return (Always AST.Void)
+          _     -> return t
+      (Just (ValBool False)) -> return Never
+      (Just _)               -> throwError (GenericError "Impossible type-error")
+      Nothing                -> sometimes <$> inferStmt s0
+  SExp e -> typecheck e >> return Never
+
+-- TODO Unimplemented.
+assign :: Ident -> Expr -> TypeChecker ()
+assign _ _ = return ()
+incr, decr :: Ident -> TypeChecker ()
+incr _ = return ()
+decr _ = return ()
+
+inferBlk :: Blk -> TypeChecker (Frequency Type)
+inferBlk (Block stmts) = inferStmts stmts
+
+-- | Inferring the *return-type* of a sequence of statements. With
+-- value-inference this is not simply a fold or map across the list of
+-- statements. Consider these two programs:
+--
+-- > int f(x) { if(true) return 0; }
+--
+-- > int f(x) { if(x) return 0; }
+--
+-- The first one is acceptable because it always returns an integer. Whereas the
+-- latter may take a branch without a valid return-statement.
+inferStmts :: [Stmt] -> TypeChecker (Frequency Type)
+inferStmts stmts = case stmts of
+  -- Note: We do not assume an empty return-statement.
+  []     -> return Never
+  s : ss -> do
+    fts <- inferStmt s
+    case fts of
+      Always{}    -> return fts
+      Sometimes{} -> inferStmts ss
+      Never       -> inferStmts ss
+
+data Frequency a = Always a | Sometimes a | Never deriving (Show)
+
+-- | Demotes an `Always` to a `Sometimes`.
+sometimes :: Frequency a -> Frequency a
+sometimes f = case f of
+  (Always a)  -> Sometimes a
+  Sometimes{} -> f
+  Never       -> f
+
+-- | Promotes a `Sometimes` to an `Always`.
+always :: Frequency a -> Frequency a
+always f = case f of
+  (Sometimes a)  -> Always a
+  Always{}       -> f
+  Never          -> f
+
+-- | Returns the least frequent and selecting the first value if they are
+-- equally frequent.
+least :: Frequency a -> Frequency a -> Frequency a
+least Never         _  = Never
+least a@Sometimes{} fb = case fb of
+  Never -> Never
+  _     -> a
+least a@Always{}    fb = case fb of
+  Never       -> Never
+  Sometimes{} -> fb
+  _           -> a
+
+data Value
+    = ValInt Integer
+    | ValDoub Double
+    | ValBool Bool
+    | ValString String
+    deriving (Show)
+
+staticValue :: Expr -> TypeChecker (Maybe Value)
+staticValue e = case e of
+    -- TODO `lookupValVar` is not yet implemented!
+    --     EVar i -> Just <$> lookupValVar i
+    EVar{} -> stub
+    ELitInt i -> return (Just (ValInt i))
+    ELitDoub d -> return (Just (ValDoub d))
+    ELitTrue -> return (Just (ValBool True))
+    ELitFalse -> return (Just (ValBool False))
+    EString s -> return (Just (ValString s))
+    Neg e0 -> valNeg `changeVal` staticValue e0
+    Not e0 -> valNot `changeVal` staticValue e0
+    -- TODO We can also check static types in these cases.
+    EMul{} -> stub
+    EAdd{} -> stub
+    ERel{} -> stub
+    EAnd{} -> stub
+    EOr{}  -> stub
+    EApp{} -> stub
+    where
+      changeVal f m = fmap f <$> m
+      valNot (ValBool b) = ValBool (not b)
+      -- Really this is can only happen if there is a type-error.
+      valNot v           = v
+      valNeg (ValInt i)  = ValInt  (negate i)
+      valNeg (ValDoub d) = ValDoub (negate d)
+      -- Really this is a type-error.
+      valNeg v           = v
+      stub = return Nothing

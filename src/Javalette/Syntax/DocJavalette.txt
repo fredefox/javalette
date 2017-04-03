@@ -39,8 +39,8 @@ The set of reserved words is the set of terminals appearing in the grammar. Thos
 
 The reserved words used in Javalette are the following:
   | ``boolean`` | ``double`` | ``else`` | ``false``
-  | ``if`` | ``int`` | ``return`` | ``true``
-  | ``void`` | ``while`` |  | 
+  | ``if`` | ``int`` | ``return`` | ``string``
+  | ``true`` | ``void`` | ``while`` | 
 
 The symbols used in Javalette are the following:
   | ( | ) | , | {

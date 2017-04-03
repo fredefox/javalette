@@ -205,7 +205,7 @@ testCompilation c good fs =
 testCompilationProg :: FilePath -> Bool -> FilePath -> IO ErrorReport
 testCompilationProg path good f = do
   let c = path ++ " " ++ f
-  putStrLn $ takeFileName path ++ " " ++ takeFileName f ++ "..."
+--  putStrLn $ takeFileName path ++ " " ++ takeFileName f ++ "..."
   (out,err,_) <- runCommandStrWait c ""
   let rep = defRep {repCmd = f, repStdOut = out, repStdErr = err}
   lns <- return $ lines err

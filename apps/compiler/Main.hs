@@ -30,11 +30,17 @@ compile :: String -> Either CompilerErr ()
 compile s = do
   p <- parseProgram s
   typecheck p
+  staticControlFlowCheck p
 
 typecheck :: TypeCheck a => a -> Either CompilerErr ()
 typecheck = inLeft TypeErr
   . TypeChecking.evalTypeChecker
   . TypeChecking.typecheck
+
+staticControlFlowCheck :: Prog -> Either CompilerErr ()
+staticControlFlowCheck = inLeft TypeErr
+  . TypeChecking.evalTypeChecker
+  . TypeChecking.staticControlFlowCheck
 
 parseProgram :: String -> Either CompilerErr Prog
 parseProgram s = inLeft ParseErr (parse s)
