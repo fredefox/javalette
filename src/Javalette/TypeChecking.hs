@@ -104,12 +104,25 @@ newScope = modify (modifyVars $ \xs -> M.empty : xs)
 unionDefs :: Definitions -> TypeChecker ()
 unionDefs defs = modify (modifyDefs $ M.union defs)
 
+-- It's an error if you bind to an already bound variable.
 addBinding :: Ident -> Type -> TypeChecker ()
 addBinding i t = do
   e <- get
   case envVars e of
     []      -> throwError EmptyEnvironment
-    x : xs  -> put $ e { envVars = M.insert i t x : xs }
+    x : xs  -> do
+      m <- insertMaybe i t x
+      put $ e { envVars = m : xs }
+
+insertMaybe
+  :: (Ord k, MonadError TypeCheckingError m)
+  => k
+  -> a
+  -> Map k a
+  -> m (Map k a)
+insertMaybe k a m = case M.lookup k m of
+  Nothing -> return $ M.insert k a m
+  Just{}  -> throwError (GenericError "Bind to bound var")
 
 addBindings :: [(Ident, Type)] -> TypeChecker ()
 addBindings = mapM_ (uncurry addBinding)
