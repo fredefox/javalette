@@ -38,7 +38,7 @@ data Stmt
 data Item = NoInit Ident | Init Ident Expr
   deriving (Eq, Ord, Show, Read)
 
-data Type = Int | Doub | Bool | Void | Fun Type [Type] | String
+data Type = Int | Doub | Bool | Void | String | Fun Type [Type]
   deriving (Eq, Ord, Show, Read)
 
 data Expr

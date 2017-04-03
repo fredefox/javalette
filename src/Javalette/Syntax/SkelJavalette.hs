@@ -48,6 +48,7 @@ transType x = case x of
   Doub -> failure x
   Bool -> failure x
   Void -> failure x
+  String -> failure x
   Fun type_ types -> failure x
 transExpr :: Expr -> Result
 transExpr x = case x of
