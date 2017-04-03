@@ -296,7 +296,17 @@ throwMixErr :: TypeChecker a
 throwMixErr = throwError $ GenericError "Plz, can't mix and match numerical values"
 
 argsMatch :: [Expr] -> [Arg] -> TypeChecker ()
-argsMatch = zipWithM_ argMatch
+argsMatch = zipWithMRagged_ (GenericError "Arg mismatch") argMatch
+
+-- | A version of `Control.Monad.zipWithM_` that rejects ragged lists with the
+-- specified error.
+zipWithMRagged_ :: MonadError e m => e -> (a -> b -> m c) -> [a] -> [b] -> m ()
+zipWithMRagged_ e _ [] ys = case ys of
+  [] -> return ()
+  _  -> throwError e
+zipWithMRagged_ e f (x : xs) ys = case ys of
+  []        -> throwError e
+  (y : yss) -> f x y >> zipWithMRagged_ e f xs yss
 
 argMatch :: Expr -> Arg -> TypeChecker ()
 argMatch e (Argument t _) = do
