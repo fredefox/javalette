@@ -234,7 +234,7 @@ itemIdent itm = case itm of
 isNumeric :: Type -> Bool
 isNumeric t = case t of
   { Int  -> True ; Doub -> True
-  ; Bool -> False ; Void -> False ; Fun{} -> False
+  ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False
   }
 
 typecheckItem :: Type -> Item -> TypeChecker ()

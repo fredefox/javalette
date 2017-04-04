@@ -2,6 +2,7 @@ module Javaletter.Interpreter
   ( interpret
   ) where
 
+import Data.Maybe
 import Control.Monad.State
 import Control.Monad.Except
 import Data.Map (Map)
@@ -15,16 +16,16 @@ import qualified Javalette.Interpreter.Program as Jlt
 interpret :: AST.Prog -> IO ()
 interpret = runInterpreter . interp
 
-reportError :: IO (Either InterpreterError ((), Env)) -> IO ()
+reportError :: IO (Either InterpreterError (Value, Env)) -> IO ()
 reportError act = act >>= \x -> case x of
-  Left err      -> prettyPrint err
-  Right ((), _) -> return ()
+  Left err -> prettyPrint err
+  Right{}  -> return ()
 
 prettyPrint :: Pretty a => a -> IO ()
 prettyPrint = putStrLn . prettyShow
 
 runInterpreter
-  :: Interpreter ()
+  :: Interpreter Value
   -> IO ()
 runInterpreter
   = reportError
@@ -85,7 +86,7 @@ instance Pretty InterpreterError where
 type Interpreter a = StateT Env (ExceptT InterpreterError Jlt.Program) a
 
 class Interpretable a where
-  interp :: a -> Interpreter ()
+  interp :: a -> Interpreter Value
 
 modifyDefs :: (Definitions -> Definitions) -> Interpreter ()
 modifyDefs f = modify (\e -> e { envDefs = f (envDefs e) })
@@ -103,7 +104,7 @@ putVars :: Variables -> Interpreter ()
 putVars vars = modify (\e -> e { envVars = vars })
 
 instance Interpretable AST.Prog where
-  interp (AST.Program defs) = do
+  interp (AST.Program defs) = valVoid $ do
     modifyDefs (M.union defs')
     case M.lookup main defs' of
       Nothing -> throwError (Generic "No main function")
@@ -132,7 +133,7 @@ withNewScope act = do
 instance Interpretable AST.TopDef where
   interp (AST.FnDef _ _ args blk) = withNewScope $ do
     mapM_ ((`addBinding` nullValue) . argIdent) args
-    interp blk
+    fromMaybe ValVoid <$> interpReturnBlk blk
 
 argIdent :: AST.Arg -> AST.Ident
 argIdent (AST.Argument _ i) = i
@@ -156,36 +157,45 @@ addBinding i val = do
       Just{} -> throwError (Generic "Variable already bound")
       Nothing -> putVars (M.insert i val m : ms)
 
-instance Interpretable AST.Blk where
-  interp (AST.Block stmts) = withNewScope (mapM_ interp stmts)
+interpReturnBlk :: AST.Blk -> Interpreter (Maybe Value)
+interpReturnBlk (AST.Block stmts)
+    = withNewScope
+    $ fmap firstJust . mapM interpReturn $ stmts
 
-valueOfBlk :: AST.Blk -> Interpreter Value
-valueOfBlk = undefined
+firstJust [] = Nothing
+firstJust (x : xs) = case x of
+  Nothing -> firstJust xs
+  Just{} -> x
 
-instance Interpretable AST.Stmt where
-  interp s = case s of
-    AST.Empty -> return ()
-    AST.BStmt blk -> interp blk
+interpReturn :: AST.Stmt -> Interpreter (Maybe Value)
+interpReturn s = case s of
+    AST.Empty -> return Nothing
+    AST.BStmt blk -> interpReturnBlk blk
     AST.Decl _ its -> do
       vals <- mapM identAndValue its
       mapM_ (uncurry addBinding) vals
-    AST.Ass i e -> assign i e
-    AST.Incr i  -> incr i
-    AST.Decr i  -> decr i
-    AST.Ret e   -> interp e
-    AST.VRet    -> return ()
+      return Nothing
+    AST.Ass i e -> assign i e >> return Nothing
+    AST.Incr i  -> incr i >> return Nothing
+    AST.Decr i  -> decr i >> return Nothing
+    AST.Ret e   -> Just <$> valueOf e
+    AST.VRet    -> return (Just ValVoid)
     AST.Cond e s0 -> do
       v <- valueOf e
-      when (isTrue v) (interp s0)
+      if isTrue v
+      then interpReturn s0
+      else return Nothing
     AST.CondElse e s0 s1 -> do
       v <- valueOf e
       if isTrue v
-      then interp s0
-      else interp s1
+      then interpReturn s0
+      else interpReturn s1
     AST.While e s0 -> do
       v <- valueOf e
-      when (isTrue v) (interp s0 >> interp s)
-    AST.SExp e -> interp e
+      if isTrue v
+      then interpReturn s0 >> interpReturn s
+      else return Nothing
+    AST.SExp e -> valueOf e >> return Nothing
 
 isTrue :: Value -> Bool
 isTrue (ValBool True) = True
@@ -232,9 +242,6 @@ modFirst i f vars =
     (m : ms) -> case M.lookup i m of
       Nothing -> modFirst i f vars
       Just v  -> putVars $ M.insert i (f v) m : ms
-
-instance Interpretable AST.Expr where
-  interp = void . valueOf
 
 valueOf :: AST.Expr -> Interpreter Value
 valueOf e = case e of
@@ -291,7 +298,7 @@ apply i es = do
       _ -> throwError (Generic "Unknown built-int")
     Just (Def (AST.FnDef _ i args blk)) -> withNewScope $ do
       addBindings (map ident args) vs
-      valueOfBlk blk
+      fromMaybe ValVoid <$> interpReturnBlk blk
 
 addBindings :: [AST.Ident] -> [Value] -> Interpreter ()
 addBindings = zipWithM_ addBinding
