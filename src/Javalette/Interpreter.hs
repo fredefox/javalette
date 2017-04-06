@@ -171,8 +171,8 @@ interpReturn :: AST.Stmt -> Interpreter (Maybe Value)
 interpReturn s = case s of
     AST.Empty -> return Nothing
     AST.BStmt blk -> interpReturnBlk blk
-    AST.Decl _ its -> do
-      vals <- mapM identAndValue its
+    AST.Decl t its -> do
+      vals <- mapM (identAndValue t) its
       mapM_ (uncurry addBinding) vals
       return Nothing
     AST.Ass i e -> assign i e >> return Nothing
@@ -201,10 +201,19 @@ isTrue :: Value -> Bool
 isTrue (ValBool True) = True
 isTrue _ = False
 
-identAndValue :: AST.Item -> Interpreter (AST.Ident, Value)
-identAndValue itm = case itm of
-  AST.NoInit i -> return (i, nullValue)
+identAndValue :: AST.Type -> AST.Item -> Interpreter (AST.Ident, Value)
+identAndValue t itm = case itm of
+  AST.NoInit i -> return (i, defaultValue t)
   AST.Init i e -> (,) i <$> valueOf e
+
+defaultValue :: AST.Type -> Value
+defaultValue t = case t of
+  AST.Int -> ValInt 0
+  AST.Doub -> ValDoub 0
+  AST.Bool -> ValBool False
+  AST.Void -> ValVoid
+  AST.String -> ValString ""
+  AST.Fun{} -> error "Cannot assign functions to variables"
 
 assign :: AST.Ident -> AST.Expr -> Interpreter ()
 assign i e = do
