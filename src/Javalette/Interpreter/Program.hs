@@ -51,6 +51,7 @@ interpret p = case p of
   Pure a -> return a
   Free (PrintInt    i next) -> print i >> interpret next
   Free (PrintDouble d next) -> print d >> interpret next
+  Free (PrintString s next) -> putStrLn s >> interpret next
   Free (ReadInt     f     ) -> readLn >>= interpret . f
   Free (ReadDouble  f     ) -> readLn >>= interpret . f
 

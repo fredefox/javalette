@@ -1,11 +1,13 @@
 module Main ( main ) where
 
+import Control.Monad
 import System.IO
 import System.Environment
 
 import Javalette.Syntax.AbsJavalette
-import Javalette.Parser ( parse )
+import qualified Javalette.Parser as Parser
 import qualified Javalette.TypeChecking as TypeChecking
+import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 
 main :: IO ()
@@ -15,7 +17,15 @@ main = do
     Left err  -> do
       putStrLnErr "ERROR"
       print err
-    Right{} -> putStrLnErr "OK"
+    Right{} -> do
+      putStrLnErr "OK"
+      interp inp
+
+t = readFile "jlctests/testsuite/core/core005.jl" >>= interp
+
+interp p = case parseProgram p of
+  Left{} -> return ()
+  Right p -> Interpreter.interpret p
 
 -- TODO: We might like to do something more fancy (e.g. using
 -- optparse-applicative)
@@ -43,7 +53,7 @@ staticControlFlowCheck = inLeft TypeErr
   . TypeChecking.staticControlFlowCheck
 
 parseProgram :: String -> Either CompilerErr Prog
-parseProgram s = inLeft ParseErr (parse s)
+parseProgram s = inLeft ParseErr (Parser.parse s)
 
 putStrLnErr :: String -> IO ()
 putStrLnErr = hPutStrLn stderr

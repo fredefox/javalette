@@ -1,4 +1,4 @@
-module Javaletter.Interpreter
+module Javalette.Interpreter
   ( interpret
   ) where
 
@@ -39,6 +39,7 @@ data Value
   | ValVoid
   | ValBool Bool
   | ValString String
+  deriving (Show)
 
 -- TODO Not sure `ValVoid` is a good candidate for the null-value.
 nullValue :: Value
@@ -47,11 +48,11 @@ nullValue = ValVoid
 data Env = Env
   { envDefs :: Definitions
   , envVars :: Variables
-  }
+  } deriving (Show)
 
 type Definitions = Map AST.Ident Definition
 type Variables   = [Map AST.Ident Value]
-data Definition = DefWiredin WiredIn | Def AST.TopDef
+data Definition = DefWiredin WiredIn | Def AST.TopDef deriving (Show)
 
 initEnv :: Env
 initEnv = Env
@@ -63,7 +64,7 @@ data WiredIn = WiredIn
   { wiredInType :: AST.Type
   , wiredInArgs :: [AST.Arg]
   , wiredInIdent :: AST.Ident
-  }
+  } deriving (Show)
 
 wiredInDefs :: Definitions
 wiredInDefs = M.fromList
@@ -139,10 +140,9 @@ argIdent :: AST.Arg -> AST.Ident
 argIdent (AST.Argument _ i) = i
 
 lookupVar :: AST.Ident -> Interpreter (Maybe Value)
-lookupVar i = firstMatch <$> getVars
-  where
-    firstMatch :: Variables -> Maybe Value
-    firstMatch = foldr ((>>) . M.lookup i) Nothing
+lookupVar i = firstMatch i <$> getVars
+
+firstMatch i xs = firstJust . map (M.lookup i) $ xs
 
 lookupDef :: AST.Ident -> Interpreter (Maybe Definition)
 lookupDef i = M.lookup i <$> getDefs
@@ -228,20 +228,22 @@ decrVal _ = error "Cannot decrement non-numeric value"
 modifyVariable :: AST.Ident -> (Value -> Value) -> Interpreter ()
 modifyVariable i f = do
   vars <- getVars
-  modFirst i f vars
+  case modFirst i f vars of
+    Nothing -> throwError (Generic "Assignment to non-existant variable")
+    Just v  -> putVars v
 
 setVariable :: AST.Ident -> Value -> Interpreter ()
 setVariable i v = modifyVariable i (const v)
 
 -- | Modifies the closest bound variable and throws an error if it does not
 -- exist.
-modFirst :: AST.Ident -> (Value -> Value) -> Variables -> Interpreter ()
+modFirst :: AST.Ident -> (Value -> Value) -> Variables -> Maybe Variables
 modFirst i f vars =
   case vars of
-    [] -> throwError (Generic "Assignment to non-existant variable")
+    [] -> Nothing
     (m : ms) -> case M.lookup i m of
-      Nothing -> modFirst i f vars
-      Just v  -> putVars $ M.insert i (f v) m : ms
+      Nothing -> (m :) <$> modFirst i f ms
+      Just v  -> Just $ M.insert i (f v) m : ms
 
 valueOf :: AST.Expr -> Interpreter Value
 valueOf e = case e of
@@ -289,7 +291,7 @@ apply i es = do
   vs <- values es
   case f of
     Nothing -> throwError (Generic "Reference to undefined function")
-    Just (DefWiredin (WiredIn _ _ (AST.Ident i))) -> case i of
+    Just (DefWiredin (WiredIn _ _ (AST.Ident n))) -> case n of
       "printInt" -> printInt vs
       "printDouble" -> printDouble vs
       "printString" -> printString vs
@@ -333,17 +335,18 @@ valVoid act = act >> return ValVoid
 opTimes, opDiv, opMod, opPlus, opMinus, opLTH, opLE, opGTH, opGE,
   opEQU, opNE, opAnd, opOr :: Value -> Value -> Value
 
+-- This can probably be made a lot prettier with type-families.
 opTimes = wrapOp (*) (*) undefined
 opDiv = wrapOp div (/) undefined
 opMod = wrapOp mod undefined undefined
 opPlus = wrapOp (+) (+) undefined
 opMinus = wrapOp (-) (-) undefined
-opLTH = wrapCmp (<) (<)
-opLE = wrapCmp (<=) (<=)
-opGTH = wrapCmp (>) (>)
-opGE = wrapCmp (>=) (>=)
-opEQU = wrapCmp (==) (==)
-opNE = wrapCmp (/=) (/=)
+opLTH = wrapCmp (<) (<) (<)
+opLE = wrapCmp (<=) (<=) (<=)
+opGTH = wrapCmp (>) (>) (>)
+opGE = wrapCmp (>=) (>=) (>=)
+opEQU = wrapCmp (==) (==) (==)
+opNE = wrapCmp (/=) (/=) (/=)
 opAnd = wrapOp undefined undefined (&&)
 opOr = wrapOp undefined undefined (||)
 
@@ -360,7 +363,9 @@ wrapOp _ _ _ _ _ = undefined
 wrapCmp
   :: (Integer -> Integer -> Bool)
   -> (Double  -> Double  -> Bool)
+  -> (Bool    -> Bool    -> Bool)
   -> Value -> Value -> Value
-wrapCmp intOp _  (ValInt a)  (ValInt b)  = ValBool (a `intOp` b)
-wrapCmp _ doubOp (ValDoub a) (ValDoub b) = ValBool (a `doubOp` b)
-wrapCmp _ _ _ _ = undefined
+wrapCmp intOp _ _  (ValInt a)  (ValInt b)  = ValBool (a `intOp` b)
+wrapCmp _ doubOp _ (ValDoub a) (ValDoub b) = ValBool (a `doubOp` b)
+wrapCmp _ _ boolOp (ValBool a) (ValBool b) = ValBool (a `boolOp` b)
+wrapCmp _ _ _ _ _ = undefined

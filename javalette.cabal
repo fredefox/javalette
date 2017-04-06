@@ -21,6 +21,8 @@ library
                      , Javalette.Syntax.ParJavalette
                      , Javalette.Syntax.PrintJavalette
                      , Javalette.Syntax.SkelJavalette
+                     , Javalette.Interpreter
+                     , Javalette.Interpreter.Program
                      , Javalette.TypeChecking
                      , Javalette.Parser
                      , Javalette.Parser.Main
