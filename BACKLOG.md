@@ -1,7 +1,4 @@
 Backlog
 =======
-core026.jl
-
-contains a while-statement where the condition is always true.
-There is a return-statement inside the body of the loop, yet my
-interpreter runs forever
+bad056 is accepted. This is due to some special case for the
+modulo-operator that we're not handling.
