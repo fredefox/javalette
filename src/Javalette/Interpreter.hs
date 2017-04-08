@@ -142,7 +142,8 @@ argIdent (AST.Argument _ i) = i
 lookupVar :: AST.Ident -> Interpreter (Maybe Value)
 lookupVar i = firstMatch i <$> getVars
 
-firstMatch i xs = firstJust . map (M.lookup i) $ xs
+firstMatch :: Ord k => k -> [Map k a] -> Maybe a
+firstMatch i = firstJust . map (M.lookup i)
 
 lookupDef :: AST.Ident -> Interpreter (Maybe Definition)
 lookupDef i = M.lookup i <$> getDefs
@@ -158,10 +159,20 @@ addBinding i val = do
       Nothing -> putVars (M.insert i val m : ms)
 
 interpReturnBlk :: AST.Blk -> Interpreter (Maybe Value)
-interpReturnBlk (AST.Block stmts)
-    = withNewScope
-    $ fmap firstJust . mapM interpReturn $ stmts
+interpReturnBlk (AST.Block stmts) = withNewScope $ untillReturn stmts
 
+-- We cannot use `mapM` because `>>` is strict in `Interpreter`. We
+-- wanna short-cut the computation at the time when we encounter the first
+-- return statement (represented by a `Just{}`).
+untillReturn :: [AST.Stmt] -> Interpreter (Maybe Value)
+untillReturn []        = return Nothing
+untillReturn (x : xs) = do
+  r <- interpReturn x
+  case r of
+    Nothing -> untillReturn xs
+    Just{}  -> return r
+
+firstJust :: [Maybe a] -> Maybe a
 firstJust [] = Nothing
 firstJust (x : xs) = case x of
   Nothing -> firstJust xs
@@ -193,7 +204,11 @@ interpReturn s = case s of
     AST.While e s0 -> do
       v <- valueOf e
       if isTrue v
-      then interpReturn s0 >> interpReturn s
+      then do
+        r <- interpReturn s0
+        case r of
+          Nothing -> interpReturn s
+          Just{} -> return r
       else return Nothing
     AST.SExp e -> valueOf e >> return Nothing
 
@@ -307,7 +322,7 @@ apply i es = do
       "readInt" -> readInt vs
       "readDouble" -> readDouble vs
       _ -> throwError (Generic "Unknown built-int")
-    Just (Def (AST.FnDef _ i args blk)) -> withNewScope $ do
+    Just (Def (AST.FnDef _ _ args blk)) -> withNewScope $ do
       addBindings (map ident args) vs
       fromMaybe ValVoid <$> interpReturnBlk blk
 
