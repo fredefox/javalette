@@ -14,7 +14,7 @@ import qualified Javalette.Syntax.AbsJavalette as AST
 import qualified Javalette.Interpreter.Program as Jlt
 
 interpret :: AST.Prog -> IO ()
-interpret = runInterpreter . interp
+interpret = runInterpreter . interpProg
 
 reportError :: IO (Either InterpreterError (Value, Env)) -> IO ()
 reportError act = act >>= \x -> case x of
@@ -86,9 +86,6 @@ instance Pretty InterpreterError where
 
 type Interpreter a = StateT Env (ExceptT InterpreterError Jlt.Program) a
 
-class Interpretable a where
-  interp :: a -> Interpreter Value
-
 modifyDefs :: (Definitions -> Definitions) -> Interpreter ()
 modifyDefs f = modify (\e -> e { envDefs = f (envDefs e) })
 
@@ -104,21 +101,22 @@ getDefs = envDefs <$> get
 putVars :: Variables -> Interpreter ()
 putVars vars = modify (\e -> e { envVars = vars })
 
-instance Interpretable AST.Prog where
-  interp (AST.Program defs) = valVoid $ do
-    modifyDefs (M.union defs')
-    case M.lookup main defs' of
-      Nothing -> throwError (Generic "No main function")
-      Just DefWiredin{} -> throwError (Generic "The main function should not be a built-in")
-      Just (Def m)  -> interp m
-    where
-      defs' = toMap defs
-      toMap :: [AST.TopDef] -> Definitions
-      toMap = M.fromList . map toPair
-      toPair :: AST.TopDef -> (AST.Ident, Definition)
-      toPair def@(AST.FnDef _ i _ _) = (i, Def def)
-      main :: AST.Ident
-      main = AST.Ident "main"
+
+interpProg :: AST.Prog -> Interpreter Value
+interpProg (AST.Program defs) = valVoid $ do
+  modifyDefs (M.union defs')
+  case M.lookup main defs' of
+    Nothing -> throwError (Generic "No main function")
+    Just DefWiredin{} -> throwError (Generic "The main function should not be a built-in")
+    Just (Def m)  -> interpTopDef m
+  where
+    defs' = toMap defs
+    toMap :: [AST.TopDef] -> Definitions
+    toMap = M.fromList . map toPair
+    toPair :: AST.TopDef -> (AST.Ident, Definition)
+    toPair def@(AST.FnDef _ i _ _) = (i, Def def)
+    main :: AST.Ident
+    main = AST.Ident "main"
 
 pushScope, popScope :: Interpreter ()
 pushScope = modify (\e -> e { envVars = M.empty : envVars e})
@@ -131,10 +129,10 @@ withNewScope act = do
   popScope
   return a
 
-instance Interpretable AST.TopDef where
-  interp (AST.FnDef _ _ args blk) = withNewScope $ do
-    mapM_ ((`addBinding` nullValue) . argIdent) args
-    fromMaybe ValVoid <$> interpReturnBlk blk
+interpTopDef :: AST.TopDef -> Interpreter Value
+interpTopDef (AST.FnDef _ _ args blk) = withNewScope $ do
+  mapM_ ((`addBinding` nullValue) . argIdent) args
+  fromMaybe ValVoid <$> interpReturnBlk blk
 
 argIdent :: AST.Arg -> AST.Ident
 argIdent (AST.Argument _ i) = i
@@ -329,6 +327,7 @@ apply i es = do
 addBindings :: [AST.Ident] -> [Value] -> Interpreter ()
 addBindings = zipWithM_ addBinding
 
+ident :: AST.Arg -> AST.Ident
 ident (AST.Argument _ i) = i
 
 values :: [AST.Expr] -> Interpreter [Value]
