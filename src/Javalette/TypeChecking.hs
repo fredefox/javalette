@@ -8,6 +8,7 @@ module Javalette.TypeChecking
   , TypeCheckingError(..)
   , Infer(..)
   , staticControlFlowCheck
+  , typecheck
   ) where
 
 import Data.Map (Map)
@@ -17,6 +18,9 @@ import Control.Monad.State
 
 import Javalette.Syntax.AbsJavalette
 import qualified Javalette.Syntax.AbsJavalette as AST
+
+typecheck :: TypeCheck a => a -> TypeChecker ()
+typecheck = typechk
 
 -- * Type errors
 
@@ -46,9 +50,9 @@ class TypeCheck a where
   -- but use suitable constraints like MonadError etc..
   -- TODO: Some elements of the AST need more arguments to be type-checked.
   -- So this type-class is sort of less than ideal.
-  typecheck :: a -> TypeChecker ()
-  default typecheck :: Infer a => a -> TypeChecker ()
-  typecheck = void . infer
+  typechk :: a -> TypeChecker ()
+  default typechk :: Infer a => a -> TypeChecker ()
+  typechk = void . infer
 
 -- | This class defines something which type can be inferred.
 class TypeCheck a => Infer a where
@@ -165,15 +169,15 @@ mkFunEnv :: [TopDef] -> Definitions
 mkFunEnv = M.fromList . map (\def@(FnDef _ i _ _) -> (i, Def def))
 
 instance TypeCheck Prog where
-  typecheck (Program defs)
+  typechk (Program defs)
     =  unionDefs (mkFunEnv defs)
-    >> mapM_ typecheck defs
+    >> mapM_ typechk defs
 
 -- | `typecheck` checks that all the return-statements in the functions definition has the
 -- specified type. Note that this does *not* guarantee that all paths return a
 -- value of the given type. For this you need `staticControlFlowCheck`.
 instance TypeCheck TopDef where
-  typecheck (FnDef t _ args blk) = do
+  typechk (FnDef t _ args blk) = do
     _ <- newScope
     _ <- addArgs args
     typecheckBlk t blk
@@ -225,7 +229,7 @@ typecheckStmt t s = case s of
   While e s0 -> do
     inferBoolean e
     typecheckStmt t s0
-  SExp e -> typecheck e
+  SExp e -> typechk e
 
 -- | Helper function that checks that an expression has a boolean type.
 inferBoolean :: Expr -> TypeChecker ()
@@ -445,7 +449,7 @@ inferStmt s = case s of
       (Just (ValBool False)) -> return Never
       (Just _)               -> throwError (GenericError "Impossible type-error")
       Nothing                -> sometimes <$> inferStmt s0
-  SExp e -> typecheck e >> return Never
+  SExp{} -> return Never
 
 -- TODO Unimplemented.
 assign :: Ident -> Expr -> TypeChecker ()
