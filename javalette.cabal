@@ -1,7 +1,11 @@
 name:                javalette
 version:             0.1.0.0
--- synopsis:
--- description:
+synopsis:            A compiler for Javalette.
+                     [Javalette](javalette)
+
+description:         The documentation is avaiable [here](javalette).
+
+                     [javalette]: http://www.cse.chalmers.se/edu/course/TDA283/project/
 homepage:            https://github.com/fredefox/javalette#readme
 license:             BSD3
 license-file:        LICENSE
@@ -11,6 +15,7 @@ copyright:           Frederik Hanghøj Iversen
 category:            Web
 build-type:          Simple
 extra-source-files:  README.md
+                     Makefile
 cabal-version:       >=1.10
 
 library
