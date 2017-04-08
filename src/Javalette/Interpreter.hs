@@ -41,10 +41,6 @@ data Value
   | ValString String
   deriving (Show)
 
--- TODO Not sure `ValVoid` is a good candidate for the null-value.
-nullValue :: Value
-nullValue = ValVoid
-
 data Env = Env
   { envDefs :: Definitions
   , envVars :: Variables
@@ -61,9 +57,9 @@ initEnv = Env
   }
 
 data WiredIn = WiredIn
-  { wiredInType :: AST.Type
-  , wiredInArgs :: [AST.Arg]
-  , wiredInIdent :: AST.Ident
+  { _wiredInType :: AST.Type
+  , _wiredInArgs :: [AST.Arg]
+  , _wiredInIdent :: AST.Ident
   } deriving (Show)
 
 wiredInDefs :: Definitions
@@ -131,11 +127,8 @@ withNewScope act = do
 
 interpTopDef :: AST.TopDef -> Interpreter Value
 interpTopDef (AST.FnDef _ _ args blk) = withNewScope $ do
-  mapM_ ((`addBinding` nullValue) . argIdent) args
+  mapM_ (\(AST.Argument t i)-> i `addBinding` defaultValue t) args
   fromMaybe ValVoid <$> interpReturnBlk blk
-
-argIdent :: AST.Arg -> AST.Ident
-argIdent (AST.Argument _ i) = i
 
 lookupVar :: AST.Ident -> Interpreter (Maybe Value)
 lookupVar i = firstMatch i <$> getVars
