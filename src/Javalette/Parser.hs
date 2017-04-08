@@ -1,3 +1,4 @@
+{- | A simple class-wrapper around auto-generated bnfc-stuff. -}
 {-# LANGUAGE FlexibleContexts #-}
 module Javalette.Parser ( Parseable(..) ) where
 
@@ -8,49 +9,24 @@ import Javalette.Syntax.LexJavalette ( Token )
 import Javalette.Syntax.ParJavalette
 import Javalette.Syntax.ErrM
 
+-- | This class defines stuff that can be parsed.
 class Parseable a where
+  -- | Tries to parse a string to the target `Parseable` and throws an
+  -- exception (in `MonadError`) if this is unsuccessful.
   parse :: MonadError String m => String -> m a
 
+-- | Programs are the only thing that is parseable
 instance Parseable Prog where
   parse = wrapParse pProg
 
--- instance Parseable TopDef where
---   parse = wrapParse pTopDef
+-- | Generalize `Err` to any `MonadError`.
+liftErr :: MonadError String m => Err a -> m a
+liftErr (Ok a) = return a
+liftErr (Bad s) = throwError s
 
--- instance Parseable Arg where
---   parse = wrapParse pArg
-
--- instance Parseable Blk where
---   parse = wrapParse pBlk
-
--- instance Parseable Stmt where
---   parse = wrapParse pStmt
-
--- instance Parseable Item where
---   parse = wrapParse pItem
-
--- instance Parseable Type where
---   parse = wrapParse pType
-
--- instance Parseable Expr where
---   parse = wrapParse pExpr
-
--- instance Parseable AddOp where
---   parse = wrapParse pAddOp
-
--- instance Parseable MulOp where
---   parse = wrapParse pMulOp
-
--- instance Parseable RelOp where
---   parse = wrapParse pRelOp
-
-
-wrapErr :: MonadError String m => Err a -> m a
-wrapErr (Ok a) = return a
-wrapErr (Bad s) = throwError s
-
+-- | Wraps a parsing function.
 wrapParse :: MonadError String m
   => ([Token] -> Err a) -- ^ The parser
   -> String             -- ^ The string to parse
   -> m a
-wrapParse p = wrapErr . p . myLexer
+wrapParse p = liftErr . p . myLexer
