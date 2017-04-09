@@ -24,6 +24,7 @@ library
                      , Javalette.Syntax.ParJavalette
                      , Javalette.Syntax.PrintJavalette
                      , Javalette.Syntax.SkelJavalette
+                     , Javalette.Backend.Internals
   exposed-modules:     Javalette.Syntax
                      , Javalette.Interpreter
                      , Javalette.Interpreter.Program
@@ -31,6 +32,9 @@ library
                      , Javalette.Parser
                      , Javalette.Parser.Main
                      , Javalette.PrettyPrint
+                     , Javalette.Compiler
+                     , Javalette.Backend
+                     , Javalette.Backend.LLVM
   build-depends:       array
                      , base >= 4.7 && < 5
                      , containers >= 0.5.7
