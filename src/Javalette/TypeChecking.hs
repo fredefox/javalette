@@ -1,3 +1,4 @@
+{- | Typechecking of the Javalette programming language -}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
 module Javalette.TypeChecking
