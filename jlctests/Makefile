@@ -11,6 +11,7 @@ distrib:
 	rm -rf tester/.git tester/.gitignore tester/report ; tester/*.py ; true
 	tar -czf tester.tar.gz tester
 
+BUILD_DIR = $(shell stack path --project-root)/$(shell stack path --dist-dir)/build/jlc
+
 test:   Grade
-	stack install javalette:jlc
-	./Grade `stack path --local-bin`
+	./Grade $(BUILD_DIR)
