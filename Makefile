@@ -17,4 +17,5 @@ dist:   report
 
 .PHONY: test
 test:
+	test -s jlctests || { echo "Please see README.md"; exit 1; }
 	make -C jlctests test

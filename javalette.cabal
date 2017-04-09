@@ -13,6 +13,7 @@ category:            Web
 build-type:          Simple
 extra-source-files:  README.md
                      Makefile
+                     stack.yaml
 cabal-version:       >=1.10
 
 library
