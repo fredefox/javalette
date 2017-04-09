@@ -19,22 +19,22 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   other-modules:       Javalette.Syntax.AbsJavalette
-                     , Javalette.Syntax.ErrM
-                     , Javalette.Syntax.LexJavalette
-                     , Javalette.Syntax.ParJavalette
-                     , Javalette.Syntax.PrintJavalette
-                     , Javalette.Syntax.SkelJavalette
-                     , Javalette.Backend.Internals
+                       Javalette.Syntax.ErrM
+                       Javalette.Syntax.LexJavalette
+                       Javalette.Syntax.ParJavalette
+                       Javalette.Syntax.PrintJavalette
+                       Javalette.Syntax.SkelJavalette
+                       Javalette.Backend.Internals
   exposed-modules:     Javalette.Syntax
-                     , Javalette.Interpreter
-                     , Javalette.Interpreter.Program
-                     , Javalette.TypeChecking
-                     , Javalette.Parser
-                     , Javalette.Parser.Main
-                     , Javalette.PrettyPrint
-                     , Javalette.Compiler
-                     , Javalette.Backend
-                     , Javalette.Backend.LLVM
+                       Javalette.Interpreter
+                       Javalette.Interpreter.Program
+                       Javalette.TypeChecking
+                       Javalette.Parser
+                       Javalette.Parser.Main
+                       Javalette.PrettyPrint
+                       Javalette.Compiler
+                       Javalette.Backend
+                       Javalette.Backend.LLVM
   build-depends:       array
                      , base >= 4.7 && < 5
                      , containers >= 0.5.7
