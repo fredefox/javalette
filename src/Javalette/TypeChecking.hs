@@ -18,9 +18,13 @@ import Control.Monad.State
 
 import Javalette.Syntax.AbsJavalette
 import qualified Javalette.Syntax.AbsJavalette as AST
+import Javalette.PrettyPrint
 
-typecheck :: TypeCheck a => a -> TypeChecker ()
-typecheck = typechk
+-- | Performs typechecking of a progrma
+typecheck :: Prog -> Either TypeCheckingError ()
+typecheck p = evalTypeChecker $ do
+  typechk p
+  staticControlFlowCheck p
 
 -- * Type errors
 
@@ -33,6 +37,16 @@ data TypeCheckingError
   | Undef
   | GenericError String
   deriving (Show)
+
+instance Pretty TypeCheckingError where
+  pPrint err = case err of
+    EmptyEnvironment -> text "Empty environment"
+    Uninitialized -> text "Uninitialized variable"
+    TypeMismatch -> text "Types mismatch"
+    NoReturnStatement -> text
+      "No return statement in function of non-void return type"
+    Undef -> text "Undefined variable"
+    GenericError s -> text "Generic error:" <+> text s
 
 -- * Type- checking and -inference
 

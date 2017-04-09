@@ -7,11 +7,10 @@ import Control.Monad.State
 import Control.Monad.Except
 import Data.Map (Map)
 import qualified Data.Map as M
-import Text.PrettyPrint
-import Text.PrettyPrint.HughesPJClass
 
 import qualified Javalette.Syntax.AbsJavalette as AST
 import qualified Javalette.Interpreter.Program as Jlt
+import Javalette.PrettyPrint
 
 interpret :: AST.Prog -> IO ()
 interpret = runInterpreter . interpProg
@@ -20,9 +19,6 @@ reportError :: IO (Either InterpreterError (Value, Env)) -> IO ()
 reportError act = act >>= \x -> case x of
   Left err -> prettyPrint err
   Right{}  -> return ()
-
-prettyPrint :: Pretty a => a -> IO ()
-prettyPrint = putStrLn . prettyShow
 
 runInterpreter
   :: Interpreter Value

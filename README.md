@@ -35,7 +35,7 @@ Testing
 =======
 Tests are performed as described in the [spec](javalette-testing).
 
-Simply supply the location to where directory where the binary `jlc`
+Simply supply the location to the directory in which the binary `jlc`
 ends up. With stack this is a (somewhat awkward) one-liner:
 
     Grade `stack path --project-root`/`stack path --dist-dir`/build/jlc

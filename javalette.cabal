@@ -31,6 +31,7 @@ library
                      , Javalette.TypeChecking
                      , Javalette.Parser
                      , Javalette.Parser.Main
+                     , Javalette.PrettyPrint
   build-depends:       array
                      , base >= 4.7 && < 5
                      , containers >= 0.5.7
