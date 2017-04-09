@@ -4,7 +4,7 @@ import Control.Monad
 import System.IO
 import System.Environment
 
-import Javalette.Syntax.AbsJavalette
+import Javalette.Syntax
 import qualified Javalette.Parser as Parser
 import qualified Javalette.TypeChecking as TypeChecking
 import qualified Javalette.Interpreter as Interpreter

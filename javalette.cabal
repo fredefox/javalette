@@ -20,12 +20,13 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Javalette.Syntax.AbsJavalette
+  other-modules:       Javalette.Syntax.AbsJavalette
                      , Javalette.Syntax.ErrM
                      , Javalette.Syntax.LexJavalette
                      , Javalette.Syntax.ParJavalette
                      , Javalette.Syntax.PrintJavalette
                      , Javalette.Syntax.SkelJavalette
+  exposed-modules:     Javalette.Syntax
                      , Javalette.Interpreter
                      , Javalette.Interpreter.Program
                      , Javalette.TypeChecking

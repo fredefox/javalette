@@ -17,8 +17,8 @@ import qualified Data.Map as M
 import Control.Monad.Except
 import Control.Monad.State
 
-import Javalette.Syntax.AbsJavalette
-import qualified Javalette.Syntax.AbsJavalette as AST
+import Javalette.Syntax
+import qualified Javalette.Syntax as AST
 import Javalette.PrettyPrint
 
 -- | Performs typechecking of a progrma

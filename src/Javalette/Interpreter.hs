@@ -8,7 +8,7 @@ import Control.Monad.Except
 import Data.Map (Map)
 import qualified Data.Map as M
 
-import qualified Javalette.Syntax.AbsJavalette as AST
+import qualified Javalette.Syntax as AST
 import qualified Javalette.Interpreter.Program as Jlt
 import Javalette.PrettyPrint
 
