@@ -1,3 +1,4 @@
+{- | Typechecking of the Javalette programming language -}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
 module Javalette.TypeChecking
@@ -8,6 +9,7 @@ module Javalette.TypeChecking
   , TypeCheckingError(..)
   , Infer(..)
   , staticControlFlowCheck
+  , typecheck
   ) where
 
 import Data.Map (Map)
@@ -15,8 +17,15 @@ import qualified Data.Map as M
 import Control.Monad.Except
 import Control.Monad.State
 
-import Javalette.Syntax.AbsJavalette
-import qualified Javalette.Syntax.AbsJavalette as AST
+import Javalette.Syntax
+import qualified Javalette.Syntax as AST
+import Javalette.PrettyPrint
+
+-- | Performs typechecking of a progrma
+typecheck :: Prog -> Either TypeCheckingError ()
+typecheck p = evalTypeChecker $ do
+  typechk p
+  staticControlFlowCheck p
 
 -- * Type errors
 
@@ -29,6 +38,16 @@ data TypeCheckingError
   | Undef
   | GenericError String
   deriving (Show)
+
+instance Pretty TypeCheckingError where
+  pPrint err = case err of
+    EmptyEnvironment -> text "Empty environment"
+    Uninitialized -> text "Uninitialized variable"
+    TypeMismatch -> text "Types mismatch"
+    NoReturnStatement -> text
+      "No return statement in function of non-void return type"
+    Undef -> text "Undefined variable"
+    GenericError s -> text "Generic error:" <+> text s
 
 -- * Type- checking and -inference
 
@@ -44,50 +63,69 @@ class TypeCheck a where
   --
   -- TODO: Would be nice to generalize this infterface to not use `TypeChecker`
   -- but use suitable constraints like MonadError etc..
-  typecheck :: a -> TypeChecker ()
-  default typecheck :: Infer a => a -> TypeChecker ()
-  typecheck = void . infer
+  -- TODO: Some elements of the AST need more arguments to be type-checked.
+  -- So this type-class is sort of less than ideal.
+  typechk :: a -> TypeChecker ()
+  default typechk :: Infer a => a -> TypeChecker ()
+  typechk = void . infer
 
--- | This class defines something whose type can be inferred.
+-- | This class defines something which type can be inferred.
 class TypeCheck a => Infer a where
   infer :: a -> TypeChecker Type
 
+-- | The environment used during type-checking.
 data Env = Env
   { envVars :: [Map Ident Type]
   , envDefs :: Definitions
   }
 
 type Definitions = Map Ident Definition
+
+-- | A definition is either part of the built-in methods or it is
+-- part of the AST.
 data Definition = DefWiredIn WiredIn | Def TopDef
 
+-- | Modifies the variables - used during assignment.
 modifyVars :: ([Map Ident Type] -> [Map Ident Type]) -> Env -> Env
 modifyVars f e = e { envVars = f (envVars e) }
 
+-- | Modifies the definitions - used when accumulating all locally defined
+-- definitions.
 modifyDefs :: (Definitions -> Definitions) -> Env -> Env
 modifyDefs f e = e { envDefs = f (envDefs e) }
 
+-- | The control-structure used for typechecking.
 type TypeChecker a = StateT Env (Except TypeCheckingError) a
 
+-- | Unwraps the layers of the typechecking monad.
 runTypeChecker
   :: TypeChecker a
   -> Either TypeCheckingError (a, Env)
 runTypeChecker t = runExcept . runStateT t $ initEnv
 
+-- | Like `runTypeChecker` but discards the state of the type-checker.
 evalTypeChecker :: TypeChecker a -> Either TypeCheckingError a
 evalTypeChecker t = runExcept . evalStateT t $ initEnv
 
+-- | The environment used during type-checking. Closures are implemented by
+-- using a *list of* maps.
 initEnv :: Env
 initEnv = Env
   { envVars = []
   , envDefs = wiredInDefs
   }
 
+-- NOTE Do we wanne refer to the types defined by the AST or do we want to
+-- define our own similar varions?
+-- | A `WiredIn` is similar to a `TopDef` from the Javalette AST, but it has no
+-- implementation.
 data WiredIn = WiredIn
-  { wiredInType :: Type
-  , wiredInArgs :: [Arg]
-  , wiredInIdent :: Ident
+  { _wiredInType :: Type
+  , _wiredInArgs :: [Arg]
+  , _wiredInIdent :: Ident
   }
 
+-- | The list of wired-in definitions.
 wiredInDefs :: Definitions
 wiredInDefs = M.fromList
   [ "printInt"    |-> WiredIn Void      [Argument AST.Int    (Ident "_")] (Ident "printInt")
@@ -99,13 +137,16 @@ wiredInDefs = M.fromList
   where
     i |-> def = (Ident i, DefWiredIn def)
 
+-- | Adds a new scope. Used when entering blocks.
 newScope :: TypeChecker ()
 newScope = modify (modifyVars $ \xs -> M.empty : xs)
 
+-- | Used finding all top-level definitions.
 unionDefs :: Definitions -> TypeChecker ()
 unionDefs defs = modify (modifyDefs $ M.union defs)
 
--- It's an error if you bind to an already bound variable.
+-- | Adds a binding to the current scope. It's an error if you bind to an
+-- already bound variable.
 addBinding :: Ident -> Type -> TypeChecker ()
 addBinding i t = do
   e <- get
@@ -115,6 +156,8 @@ addBinding i t = do
       m <- insertMaybe i t x
       put $ e { envVars = m : xs }
 
+-- | Inserts a value into a map if it doesn't already exist.
+-- This function performs two lookups.
 insertMaybe
   :: (Ord k, MonadError TypeCheckingError m)
   => k
@@ -125,24 +168,31 @@ insertMaybe k a m = case M.lookup k m of
   Nothing -> return $ M.insert k a m
   Just{}  -> throwError (GenericError "Bind to bound var")
 
+-- | Pluralized version of `addBinding`.
 addBindings :: [(Ident, Type)] -> TypeChecker ()
 addBindings = mapM_ (uncurry addBinding)
 
+-- | Adds arguments to the current scope.
 addArgs :: [Arg] -> TypeChecker ()
 addArgs = addBindings . map identAndType
   where
     identAndType (Argument t i) = (i, t)
 
+-- | Creates the initial mapping between identifiers and locally defined
+-- functions.
 mkFunEnv :: [TopDef] -> Definitions
 mkFunEnv = M.fromList . map (\def@(FnDef _ i _ _) -> (i, Def def))
 
 instance TypeCheck Prog where
-  typecheck (Program defs)
+  typechk (Program defs)
     =  unionDefs (mkFunEnv defs)
-    >> mapM_ typecheck defs
+    >> mapM_ typechk defs
 
+-- | `typecheck` checks that all the return-statements in the functions definition has the
+-- specified type. Note that this does *not* guarantee that all paths return a
+-- value of the given type. For this you need `staticControlFlowCheck`.
 instance TypeCheck TopDef where
-  typecheck (FnDef t _ args blk) = do
+  typechk (FnDef t _ args blk) = do
     _ <- newScope
     _ <- addArgs args
     typecheckBlk t blk
@@ -152,10 +202,13 @@ instance TypeCheck TopDef where
 -- carry around the "current expected type" but this is also not so elegant
 -- because there are many situations where that will then not be needed.
 -- instance TypeCheck Blk where
+-- | Almost a `TypeCheck` instance for block-statements. See `typecheckStmts`.
 typecheckBlk :: Type -> Blk -> TypeChecker ()
 typecheckBlk t (Block stms) = mapM_ (typecheckStmt t) stms
 
--- instance TypeCheck Stmt where
+-- Almost the `TypeCheck` instance for `Stmt`. We check that *if* there is a
+-- return-statement, then the inferred type of that expression has the given
+-- type.
 typecheckStmt :: Type -> Stmt -> TypeChecker ()
 typecheckStmt t s = case s of
   Empty          -> return ()
@@ -191,19 +244,24 @@ typecheckStmt t s = case s of
   While e s0 -> do
     inferBoolean e
     typecheckStmt t s0
-  SExp e -> typecheck e
+  SExp e -> typechk e
 
+-- | Helper function that checks that an expression has a boolean type.
 inferBoolean :: Expr -> TypeChecker ()
 inferBoolean e = do
   te <- infer e
   unless (te == AST.Bool)
     $ throwError TypeMismatch
 
+-- | Converts a `Maybe` to an error in `MonadError`.
 maybeToError :: MonadError e m => e -> Maybe a -> m a
 maybeToError err Nothing  = throwError err
 maybeToError _   (Just a) = return a
 
-lookupTypeVar :: Ident -> TypeChecker Type
+-- | Looks up the type of a variable in the current scope.
+lookupTypeVar
+  :: Ident -- ^ The name of a variable
+  -> TypeChecker Type
 lookupTypeVar i = do
   t <- firstMatch . envVars <$> get
   maybeToError Uninitialized t
@@ -214,29 +272,38 @@ lookupTypeVar i = do
         Nothing -> firstMatch ms
         Just t  -> Just t
 
-lookupFun :: Ident -> TypeChecker Definition
+-- | Looks up a definition.
+lookupFun
+  :: Ident -- ^ The name of a function
+  -> TypeChecker Definition
 lookupFun i = do
   t <- M.lookup i . envDefs <$> get
   maybeToError Undef t
 
-lookupFunTypeAndArgs :: Ident -> TypeChecker (Type, [Arg])
+-- | Looks up the type and arguments of a definitions.
+lookupFunTypeAndArgs
+  :: Ident -- ^ The name of a function
+  -> TypeChecker (Type, [Arg])
 lookupFunTypeAndArgs i = typeAndArgs <$> lookupFun i
   where
     typeAndArgs def = case def of
       DefWiredIn (WiredIn t args _) -> (t, args)
       Def (FnDef t _ args _)        -> (t, args)
 
+-- | The identifier associated with an `Item`.
 itemIdent :: Item -> Ident
 itemIdent itm = case itm of
   NoInit i -> i
   Init i _ -> i
 
+-- | Some types are "numerical" values.
 isNumeric :: Type -> Bool
 isNumeric t = case t of
   { Int  -> True ; Doub -> True
-  ; Bool -> False ; Void -> False ; Fun{} -> False
+  ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False
   }
 
+-- | Almost the `TypeCheck` instance for a `Item`.
 typecheckItem :: Type -> Item -> TypeChecker ()
 typecheckItem t i = case i of
   NoInit{} -> return ()
@@ -274,12 +341,14 @@ instance Infer Expr where
     EAnd e0 e1 -> checkBinOp (== AST.Bool) e0 e1
     EOr e0 e1 -> checkBinOp (== AST.Bool) e0 e1
 
+-- | Helper-function for typechecking `RelOp`.
 checkRel :: RelOp -> Expr -> Expr -> TypeChecker ()
 checkRel _ e0 e1 = do
   t0 <- infer e0
   t1 <- infer e1
   unless (t0 == t1) throwMixErr
 
+-- | Helper-function for typechecking binary operators.
 checkBinOp :: (Type -> Bool) -> Expr -> Expr -> TypeChecker Type
 checkBinOp p e0 e1 = do
       t0 <- infer e0
@@ -289,13 +358,20 @@ checkBinOp p e0 e1 = do
       unless (t1 == t0) throwMixErr
       return t1
 
+-- | Generic numerical error.
 throwNumErr :: TypeChecker a
 throwNumErr = throwError $ GenericError "Expected numerical value"
 
+-- | Generic error for mixing different numerical types.
 throwMixErr :: TypeChecker a
 throwMixErr = throwError $ GenericError "Plz, can't mix and match numerical values"
 
-argsMatch :: [Expr] -> [Arg] -> TypeChecker ()
+-- | Checks that the type of a list of expression match the list of arguments.
+-- This also checks that the arity match.
+argsMatch
+  :: [Expr] -- ^ The expressions to infer the type of
+  -> [Arg]  -- ^ the arguments whose types to match against
+  -> TypeChecker ()
 argsMatch = zipWithMRagged_ (GenericError "Arg mismatch") argMatch
 
 -- | A version of `Control.Monad.zipWithM_` that rejects ragged lists with the
@@ -308,6 +384,7 @@ zipWithMRagged_ e f (x : xs) ys = case ys of
   []        -> throwError e
   (y : yss) -> f x y >> zipWithMRagged_ e f xs yss
 
+-- | Checks that an expression matches the type of an argument.
 argMatch :: Expr -> Arg -> TypeChecker ()
 argMatch e (Argument t _) = do
   t' <- infer e
@@ -316,9 +393,20 @@ argMatch e (Argument t _) = do
 
 ------------------------------------------------------------
 -- * Static control flow checks
+
 ------------------------------------------------------------
 -- TODO: This section should be moved to its own file I feel.
 
+-- | Checks that a function has return-statements in possible branches. Note
+-- that this method is not complete. I.e. some functions that would always have
+-- a return-statement may be rejected. E.g.:
+--
+-- > int main() {
+-- >   if(entscheidung()) { return 0; }
+-- > }
+--
+-- Where `entcheidung` is a function that always returns `true` but proving this
+-- is undecidable.
 staticControlFlowCheck :: Prog -> TypeChecker ()
 staticControlFlowCheck (Program defs) = do
   _ <- unionDefs (mkFunEnv defs)
@@ -334,6 +422,9 @@ staticControlFlowCheckDef (FnDef t _ args blk) = do
     Always t' -> when (t /= t')       (throwError (GenericError "Inferred type doesn't match expected type"))
     _         -> when (t /= AST.Void) (throwError (GenericError "Control-flow is out of whack you!"))
 
+-- | Infers the return-type of a statement and return how "often" we see this
+-- type. The frequency with which we see the type can be seen as wether or not
+-- *all*, *some* or *none* of the possible paths return the given type.
 inferStmt :: Stmt -> TypeChecker (Frequency Type)
 inferStmt s = case s of
   Empty          -> return Never
@@ -373,7 +464,7 @@ inferStmt s = case s of
       (Just (ValBool False)) -> return Never
       (Just _)               -> throwError (GenericError "Impossible type-error")
       Nothing                -> sometimes <$> inferStmt s0
-  SExp e -> typecheck e >> return Never
+  SExp{} -> return Never
 
 -- TODO Unimplemented.
 assign :: Ident -> Expr -> TypeChecker ()
@@ -415,13 +506,6 @@ sometimes f = case f of
   Sometimes{} -> f
   Never       -> f
 
--- | Promotes a `Sometimes` to an `Always`.
-always :: Frequency a -> Frequency a
-always f = case f of
-  (Sometimes a)  -> Always a
-  Always{}       -> f
-  Never          -> f
-
 -- | Returns the least frequent and selecting the first value if they are
 -- equally frequent.
 least :: Frequency a -> Frequency a -> Frequency a
@@ -434,6 +518,7 @@ least a@Always{}    fb = case fb of
   Sometimes{} -> fb
   _           -> a
 
+-- TODO Combine with `Javalette.Interpreter.Value`.
 data Value
     = ValInt Integer
     | ValDoub Double
@@ -441,6 +526,9 @@ data Value
     | ValString String
     deriving (Show)
 
+-- | Tries to infer the static value of an expression. Returns `Nothing` if no
+-- such guarantee can be made. The implementation is generous with the usage of
+-- `Nothing` in these cases.
 staticValue :: Expr -> TypeChecker (Maybe Value)
 staticValue e = case e of
     -- TODO `lookupValVar` is not yet implemented!
