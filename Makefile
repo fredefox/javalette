@@ -16,6 +16,6 @@ dist:   report
 	stack sdist
 
 .PHONY: test
-test:
+test:   build
 	test -s jlctests || { echo "Please see README.md"; exit 1; }
 	make -C jlctests test
