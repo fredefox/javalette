@@ -1,10 +1,8 @@
 name:                javalette
 version:             0.1.0.0
 synopsis:            A compiler for Javalette
-
-description:         The documentation is avaiable [here](javalette).
-
-                     [javalette]: http://www.cse.chalmers.se/edu/course/TDA283/project/
+description:         The documentation is avaiable here:
+                     <http://www.cse.chalmers.se/edu/course/TDA283/project/>.
 homepage:            https://github.com/fredefox/javalette#readme
 license:             BSD3
 license-file:        LICENSE
