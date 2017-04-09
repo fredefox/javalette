@@ -1,7 +1,6 @@
 name:                javalette
 version:             0.1.0.0
-synopsis:            A compiler for Javalette.
-                     [Javalette](javalette)
+synopsis:            A compiler for Javalette
 
 description:         The documentation is avaiable [here](javalette).
 
