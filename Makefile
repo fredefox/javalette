@@ -6,8 +6,14 @@ build:
 install:
 	stack install
 
-run:
-	stack exec jlc
+report: README.md
+	pandoc README.md -o report.pdf \
+	  --latex-engine=xelatex \
+	  --variable urlcolor=cyan \
+	  -V papersize:"a4paper"
+
+dist:   report
+	stack sdist
 
 .PHONY: test
 test:
