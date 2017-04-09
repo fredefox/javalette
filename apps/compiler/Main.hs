@@ -11,10 +11,11 @@ import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 import Javalette.PrettyPrint
 
+-- | Runs the compiler on all files given as arguments.
 main :: IO ()
 main = do
   inp <- parseInput
-  handleErrors $ compile inp
+  mapM_ (handleErrors . compile) inp
 
 handleErrors t =case t of
     Left err  -> do
@@ -24,11 +25,12 @@ handleErrors t =case t of
 
 -- TODO: We might like to do something more fancy (e.g. using
 -- optparse-applicative)
--- | Assumes that the first argument to this program exists and is the path to a
--- file.
-parseInput :: IO String
-parseInput = head <$> getArgs >>= readFile
+-- | Assumes that all argumens are paths to files. Reads the contents of these
+-- files.
+parseInput :: IO [String]
+parseInput = getArgs >>= mapM readFile
 
+-- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
 
 instance Pretty CompilerErr where
@@ -36,17 +38,21 @@ instance Pretty CompilerErr where
     ParseErr err' -> text "PARSE ERROR:" <+> pPrint err'
     TypeErr err'  -> text "TYPE ERROR:" <+> pPrint err'
 
+-- | Parses and typechecks a program.
 compile :: String -> Either CompilerErr ()
 compile s = do
   p <- parseProgram s
   typecheck p
 
+-- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> Either CompilerErr ()
 typecheck = inLeft TypeErr . TypeChecking.typecheck
 
+-- | Wraps the error returned by `Parser.parse`.
 parseProgram :: String -> Either CompilerErr Prog
-parseProgram s = inLeft ParseErr (Parser.parse s)
+parseProgram = inLeft ParseErr . Parser.parse
 
+-- | Prints to stderr.
 putStrLnErr :: String -> IO ()
 putStrLnErr = hPutStrLn stderr
 
