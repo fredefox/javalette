@@ -4,6 +4,7 @@ module Javalette.Backend.LLVM
 
 import Control.Monad.Except
 import Control.Monad.State
+import Control.Monad.Writer
 
 import Javalette.Backend.Internals
 import qualified Javalette.Syntax as Jlt
@@ -30,10 +31,10 @@ instance Pretty CompilerErr where
 type Compiler a = StateT Env (ExceptT CompilerErr LLVM.Program) a
 
 runCompiler :: Compiler a -> IO ()
-runCompiler = handleErrors . runExceptT . (`execStateT` initEnv)
+runCompiler = undefined . execWriter . runExceptT . (`execStateT` initEnv)
 
-handleErrors :: Pretty e => IO (Either e a) -> IO ()
-handleErrors act = act >>= printErr
+handleErrors :: Pretty e => LLVM.Program (Either e a) -> IO ()
+handleErrors act = undefined
 
 printErr :: Pretty e => Either e a -> IO ()
 printErr e = case e of

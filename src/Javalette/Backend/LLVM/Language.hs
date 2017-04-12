@@ -14,6 +14,7 @@ module Javalette.Backend.LLVM.Language
   , Instruction(..)
   -- * Other stuff
   , Program
+  , ProgramT
   , MonadProgram
   -- * Constructing a program
   -- * Translating a program

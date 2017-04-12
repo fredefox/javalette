@@ -2,6 +2,7 @@ all: build
 
 build:
 	stack build
+	ln -s `stack path --project-root`/`stack path --dist-dir`/build/jlc .
 
 install:
 	stack install
