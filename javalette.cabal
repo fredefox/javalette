@@ -12,6 +12,7 @@ copyright:           Frederik Hanghøj Iversen
 category:            Web
 build-type:          Simple
 extra-source-files:  README.md
+                     doc/README.md
                      Makefile
                      stack.yaml
 cabal-version:       >=1.10
