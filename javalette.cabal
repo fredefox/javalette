@@ -1,5 +1,5 @@
 name:                javalette
-version:             0.2.0.0
+version:             0.2.0.1
 synopsis:            A compiler for Javalette
 description:         The documentation is avaiable here:
                      <http://www.cse.chalmers.se/edu/course/TDA283/project/>.
@@ -12,25 +12,31 @@ copyright:           Frederik Hanghøj Iversen
 category:            Web
 build-type:          Simple
 extra-source-files:  README.md
-                     Makefile
+                     doc/README.md
+                     src/Makefile
                      stack.yaml
 cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
   other-modules:       Javalette.Syntax.AbsJavalette
-                     , Javalette.Syntax.ErrM
-                     , Javalette.Syntax.LexJavalette
-                     , Javalette.Syntax.ParJavalette
-                     , Javalette.Syntax.PrintJavalette
-                     , Javalette.Syntax.SkelJavalette
+                       Javalette.Syntax.ErrM
+                       Javalette.Syntax.LexJavalette
+                       Javalette.Syntax.ParJavalette
+                       Javalette.Syntax.PrintJavalette
+                       Javalette.Syntax.SkelJavalette
+                       Javalette.Backend.Internals
+                       Javalette.Backend.LLVM.Language
   exposed-modules:     Javalette.Syntax
-                     , Javalette.Interpreter
-                     , Javalette.Interpreter.Program
-                     , Javalette.TypeChecking
-                     , Javalette.Parser
-                     , Javalette.Parser.Main
-                     , Javalette.PrettyPrint
+                       Javalette.Interpreter
+                       Javalette.Interpreter.Program
+                       Javalette.TypeChecking
+                       Javalette.Parser
+                       Javalette.Parser.Main
+                       Javalette.PrettyPrint
+                       Javalette.Compiler
+                       Javalette.Backend
+                       Javalette.Backend.LLVM
   build-depends:       array
                      , base >= 4.7 && < 5
                      , containers >= 0.5.7
