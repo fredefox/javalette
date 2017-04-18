@@ -6,8 +6,8 @@ module Javalette.Backend.Internals
 import Javalette.Syntax as AST
 
 data Backend = Backend
-  { compiler :: AST.Prog -> IO ()
+  { compiler :: FilePath -> AST.Prog -> IO ()
   }
 
-runBackend :: AST.Prog -> Backend -> IO ()
-runBackend p b = compiler b p
+runBackend :: FilePath -> AST.Prog -> Backend -> IO ()
+runBackend fp p b = compiler b fp p

@@ -5,6 +5,7 @@ module Javalette.Backend.LLVM
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Writer
+import System.IO
 
 import Javalette.Backend.Internals
 import qualified Javalette.Syntax as Jlt
@@ -16,30 +17,87 @@ backend = Backend
   { compiler = compile
   }
 
-compile :: Jlt.Prog -> IO ()
-compile = runCompiler . compileProg
+compile :: FilePath -> Jlt.Prog -> IO ()
+compile fp = ioStuff . runCompiler . compileProg
+  where
+    ioStuff :: Either CompilerErr LLVM.Prog -> IO ()
+    ioStuff (Left e)  = putStrLnStdErr . prettyShow $ e
+    ioStuff (Right p) = writeFile fp (prettyShow p)
 
-data CompilerErr
+putStrLnStdErr :: String -> IO ()
+putStrLnStdErr = hPutStrLn stderr
+
+data CompilerErr = Generic String
 data Env = Env
+  { uniqId :: Int
+  }
+
+-- | Gets the current id and increments it
+incrId :: Compiler Int
+incrId = do
+  id <- uniqId <$> get
+  modify (\e -> e { uniqId = succ (uniqId e) })
+  return id
+
+-- | Gets and increments the unique id, prepends a 'v' and converts it to a
+-- name.
+getUniqName :: Compiler LLVM.Name
+getUniqName = LLVM.Name . ('v':) . show <$> incrId
 
 initEnv :: Env
-initEnv = Env
+initEnv = Env 0
 
 instance Pretty CompilerErr where
-  pPrint = error "Unimplemented"
+  pPrint err = case err of
+    Generic s -> text "ERR:" <+> text s
 
-type Compiler a = StateT Env (ExceptT CompilerErr LLVM.Program) a
+type Compiler a = StateT Env (Except CompilerErr) a
 
-runCompiler :: Compiler a -> IO ()
-runCompiler = undefined . execWriter . runExceptT . (`execStateT` initEnv)
+runCompiler :: Compiler a -> Either CompilerErr a
+runCompiler = runExcept . (`evalStateT` initEnv)
 
-handleErrors :: Pretty e => LLVM.Program (Either e a) -> IO ()
-handleErrors act = undefined
+compileProg :: Jlt.Prog -> Compiler LLVM.Prog
+compileProg (Jlt.Program defs) = do
+  gVars <- _collectGlobals
+  let decls = map decl defs
+  pDefs <- mapM collectDef defs
+  return $ LLVM.Prog
+    { LLVM.pGlobals = gVars
+    , LLVM.pDecls   = decls ++ builtinDecls
+    , LLVM.pDefs    = pDefs
+    }
+  where
+    _collectGlobals = undefined
 
-printErr :: Pretty e => Either e a -> IO ()
-printErr e = case e of
-  Left err -> prettyPrint err
-  Right{}  -> return ()
+collectDef :: Jlt.TopDef -> Compiler LLVM.Def
+collectDef (Jlt.FnDef t i args blk) = return LLVM.Def
+  { LLVM.defType = trType t
+  , LLVM.defName = undefined
+  , LLVM.defArgs = undefined
+  , LLVM.defBlks = undefined
+  }
 
-compileProg :: Jlt.Prog -> Compiler ()
-compileProg = undefined
+trType :: Jlt.Type -> LLVM.Type
+trType t = case t of
+  Jlt.Int -> LLVM.I64
+  Jlt.Doub -> undefined
+  Jlt.Bool -> undefined
+  Jlt.Void -> undefined
+  Jlt.String -> undefined
+  Jlt.Fun _t _tArgs -> undefined
+
+builtinDecls :: [LLVM.Decl]
+builtinDecls =
+  [ LLVM.Decl
+    { LLVM.declType = LLVM.Void
+    , LLVM.declName = LLVM.Name "printInt"
+    , LLVM.declArgs = [LLVM.I32]
+    }
+  ]
+
+decl :: Jlt.TopDef -> LLVM.Decl
+decl (Jlt.FnDef tp i arg blk) = LLVM.Decl
+  { LLVM.declType = undefined
+  , LLVM.declName = undefined
+  , LLVM.declArgs = undefined
+  }

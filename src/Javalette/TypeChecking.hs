@@ -303,6 +303,11 @@ isNumeric t = case t of
   ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False
   }
 
+-- | Checks that it is the single integer type.
+isInteger :: Type -> Bool
+isInteger t = case t of
+  { Int -> True ; _ -> False }
+
 -- | Almost the `TypeCheck` instance for a `Item`.
 typecheckItem :: Type -> Item -> TypeChecker ()
 typecheckItem t i = case i of
@@ -335,7 +340,10 @@ instance Infer Expr where
       unless (t == AST.Bool)
         $ throwError $ GenericError "Plz, can't not non-boolean"
       return t
-    EMul e0 _ e1 -> checkBinOp isNumeric e0 e1
+    EMul e0 op e1 -> case op of
+      -- For some reason the modulo operator is special.
+      Mod -> checkBinOp isInteger e0 e1
+      _   -> checkBinOp isNumeric e0 e1
     EAdd e0 _ e1 -> checkBinOp isNumeric e0 e1
     ERel e0 op e1 -> checkRel op e0 e1 >> return AST.Bool
     EAnd e0 e1 -> checkBinOp (== AST.Bool) e0 e1
