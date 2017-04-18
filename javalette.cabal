@@ -1,5 +1,5 @@
 name:                javalette
-version:             0.2.0.1
+version:             0.2.1.0
 synopsis:            A compiler for Javalette
 description:         The documentation is avaiable here:
                      <http://www.cse.chalmers.se/edu/course/TDA283/project/>.
