@@ -88,6 +88,9 @@ And the compiler executable `jlc` is defined in `apps/compiler/Main.hs`.
 This program takes care of input-parsing, calling the correct methods
 from the library and reporting success/error according to the spec.
 
+The syntax of javalette is described by `javalette.cf` (used by bnfc to
+generate a lexer, parser and an ast desription of the language).
+
 Typechecking
 ------------
 The typechecker is implemented using a monad-stack:

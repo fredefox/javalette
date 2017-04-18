@@ -15,6 +15,7 @@ extra-source-files:  README.md
                      doc/README.md
                      src/Makefile
                      stack.yaml
+                     Javalette.cf
 cabal-version:       >=1.10
 
 library
