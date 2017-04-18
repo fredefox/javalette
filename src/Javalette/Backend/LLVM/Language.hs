@@ -12,17 +12,7 @@ module Javalette.Backend.LLVM.Language
   , Blk(..)
   , Label(..)
   , Instruction(..)
-  -- * Other stuff
-  , Program
-  , ProgramT
-  , MonadProgram
-  -- * Constructing a program
-  -- * Translating a program
-  , translate
   ) where
-
-import Control.Monad.Writer
-import Data.Functor.Identity
 
 import Javalette.PrettyPrint
 
@@ -47,12 +37,21 @@ instance Pretty GlobalVar where
 data Name = Name String
 
 instance Pretty Name where
-  pPrint = undefined
+  pPrint (Name s) = char '@' <+> text s
 
-data Type = Type
+quoted :: String -> Doc
+quoted s = char '"' <+> text s <+> char '"'
+
+data Type
+  = Void
+  | I32
+  | I64
 
 instance Pretty Type where
-  pPrint = undefined
+  pPrint t = case t of
+    Void -> text "void"
+    I32  -> text "i32"
+    I64  -> text "i64"
 
 data Constant = Constant String
 
@@ -104,15 +103,3 @@ instance Pretty Instruction where
   pPrint i = case i of
     _ -> undefined
   pPrintList lvl xs = undefined
-
-
-progWith :: Monad m => [GlobalVar] -> [Decl] -> m [Def] -> m Prog
-progWith gv decls act = Prog gv decls <$> act
-
-type ProgramT = WriterT [Instruction]
-type Program = ProgramT Identity
-type MonadProgram = MonadWriter Instruction
-
--- | Outputs the concrete syntax corresponding to this program.
-translate :: Program a -> String
-translate = prettyShow . execWriter
