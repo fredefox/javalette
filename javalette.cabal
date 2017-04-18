@@ -13,6 +13,7 @@ category:            Web
 build-type:          Simple
 extra-source-files:  README.md
                      doc/README.md
+                     Makefile
                      src/Makefile
                      stack.yaml
                      Javalette.cf
