@@ -6,6 +6,8 @@ import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Writer
 import System.IO
+import Data.Map (Map)
+import qualified Data.Map as M
 
 import Javalette.Backend.Internals
 import qualified Javalette.Syntax as Jlt
@@ -27,25 +29,57 @@ compile fp = ioStuff . runCompiler . compileProg
 putStrLnStdErr :: String -> IO ()
 putStrLnStdErr = hPutStrLn stderr
 
+-------------------
+-- Closure stuff --
+-------------------
+type Closure a b = Map a b
+-- | The first component represents the next variable name to be used.
+type Scope a b = (b, [Closure a b])
+
+emptyClosure :: Ord a => Closure a b
+emptyClosure = mempty
+
+emptyScope :: Enum b => Scope a b
+emptyScope = (toEnum 0, [])
+
+-- | Assigns a name to `a` in the current closure and returns it. Do not call
+-- `newVar` on a variable that has already been assigned or on a scope with no
+-- closures.
+newVar :: (Ord a, Enum b) => a -> Scope a b -> (Scope a b, b)
+newVar _ (_, []) = error "Cannot bind variables with no closures at hand"
+newVar a (m, c:cs) = ((succ m, M.insert a m c : cs), m)
+
+-- | Gets whatever `a` is bound to.
+getVar :: Ord a => a -> Scope a b -> Maybe b
+getVar a (_, cs) = lookupFirst a cs
+
+lookupFirst :: Ord a => a -> [Map a b] -> Maybe b
+lookupFirst _ [] = undefined
+lookupFirst a (x : xs) = case M.lookup a x of
+  Nothing -> lookupFirst a xs
+  Just b  -> return b
+
+type Variables = Scope Jlt.Ident Int
+
 data CompilerErr = Generic String
 data Env = Env
-  { uniqId :: Int
+  -- Each time a variable is encountered it is mapped to the next number in a
+  -- sequence.
+  { variables :: Variables
   }
 
--- | Gets the current id and increments it
-incrId :: Compiler Int
-incrId = do
-  id <- uniqId <$> get
-  modify (\e -> e { uniqId = succ (uniqId e) })
-  return id
+assignName :: Jlt.Ident -> Compiler LLVM.Name
+assignName i = do
+  vars <- variables <$> get
+  let (s, v) = newVar i vars
+  modify (\e -> e { variables = s })
+  return (intToName v)
 
--- | Gets and increments the unique id, prepends a 'v' and converts it to a
--- name.
-getUniqName :: Compiler LLVM.Name
-getUniqName = LLVM.Name . ('v':) . show <$> incrId
+intToName :: Int -> LLVM.Name
+intToName = LLVM.Name . ('v':) . show
 
-initEnv :: Env
-initEnv = Env 0
+emptyEnv :: Env
+emptyEnv = Env emptyScope
 
 instance Pretty CompilerErr where
   pPrint err = case err of
@@ -54,14 +88,14 @@ instance Pretty CompilerErr where
 type Compiler a = StateT Env (Except CompilerErr) a
 
 runCompiler :: Compiler a -> Either CompilerErr a
-runCompiler = runExcept . (`evalStateT` initEnv)
+runCompiler = runExcept . (`evalStateT` emptyEnv)
 
 compileProg :: Jlt.Prog -> Compiler LLVM.Prog
 compileProg (Jlt.Program defs) = do
   gVars <- _collectGlobals
-  let decls = map decl defs
-  pDefs <- mapM collectDef defs
-  return $ LLVM.Prog
+  let decls = map defToDecl defs
+  pDefs <- mapM trTopDef defs
+  return LLVM.Prog
     { LLVM.pGlobals = gVars
     , LLVM.pDecls   = decls ++ builtinDecls
     , LLVM.pDefs    = pDefs
@@ -69,20 +103,85 @@ compileProg (Jlt.Program defs) = do
   where
     _collectGlobals = undefined
 
-collectDef :: Jlt.TopDef -> Compiler LLVM.Def
-collectDef (Jlt.FnDef t i args blk) = return LLVM.Def
-  { LLVM.defType = trType t
-  , LLVM.defName = undefined
-  , LLVM.defArgs = undefined
-  , LLVM.defBlks = undefined
-  }
+trTopDef :: Jlt.TopDef -> Compiler LLVM.Def
+trTopDef (Jlt.FnDef t i args blk) = do
+  entry <- newLabel
+  vars <- varsBlk blk
+  todo <- morestuff blk
+  return LLVM.Def
+    { LLVM.defType = trType t
+    , LLVM.defName = trName i
+    , LLVM.defArgs = map trArg args
+    , LLVM.defBlks = LLVM.Blk entry vars : todo
+    }
+    where
+      morestuff = undefined
+
+newLabel :: Compiler LLVM.Label
+newLabel = undefined
+
+pushScope, popScope :: Compiler ()
+pushScope = modify (\e -> e { variables = push . variables $ e })
+  where
+    push :: Variables -> Variables
+    push (m, xs) = (m, emptyClosure : xs)
+
+popScope = modify (\e -> e { variables = pop . variables $ e })
+  where
+    pop :: Variables -> Variables
+    pop (_, []) = error "Cannot pop on empty environment"
+    pop (m, _:xs) = (m, xs)
+
+withNewScope :: Compiler a -> Compiler a
+withNewScope act = do
+  pushScope
+  a <- act
+  popScope
+  return a
+
+varsBlk :: Jlt.Blk -> Compiler [LLVM.Instruction]
+varsBlk (Jlt.Block stmts) = withNewScope (concat <$> mapM varsStmt stmts)
+
+varsStmt :: Jlt.Stmt -> Compiler [LLVM.Instruction]
+varsStmt s = case s of
+  Jlt.Empty -> return []
+  Jlt.BStmt b -> varsBlk b
+  Jlt.Decl t its -> mapM (varDecl t) its
+  Jlt.Ass{} -> return []
+  Jlt.Incr{} -> return []
+  Jlt.Decr{} -> return []
+  Jlt.Ret{} -> return []
+  Jlt.VRet -> return []
+  Jlt.Cond _ s0 -> varsStmt s0
+  Jlt.CondElse _ s0 s1 -> liftM2 (++) (varsStmt s0) (varsStmt s1)
+  Jlt.While _ s0 -> varsStmt s0
+  Jlt.SExp{} -> return []
+
+varDecl :: Jlt.Type -> Jlt.Item -> Compiler LLVM.Instruction
+varDecl t itm = do
+  nm <- assignName (itemName itm)
+  return (alloca (trType t) nm)
+
+alloca :: LLVM.Type -> LLVM.Name -> LLVM.Instruction
+alloca = undefined
+
+itemName :: Jlt.Item -> Jlt.Ident
+itemName itm = case itm of
+  Jlt.NoInit i -> i
+  Jlt.Init i _  -> i
+
+trName :: Jlt.Ident -> LLVM.Name
+trName (Jlt.Ident s) = LLVM.Name s
+
+trArg :: Jlt.Arg -> LLVM.Type
+trArg (Jlt.Argument t _) = trType t
 
 trType :: Jlt.Type -> LLVM.Type
 trType t = case t of
   Jlt.Int -> LLVM.I64
   Jlt.Doub -> undefined
   Jlt.Bool -> undefined
-  Jlt.Void -> undefined
+  Jlt.Void -> LLVM.Void
   Jlt.String -> undefined
   Jlt.Fun _t _tArgs -> undefined
 
@@ -95,8 +194,8 @@ builtinDecls =
     }
   ]
 
-decl :: Jlt.TopDef -> LLVM.Decl
-decl (Jlt.FnDef tp i arg blk) = LLVM.Decl
+defToDecl :: Jlt.TopDef -> LLVM.Decl
+defToDecl (Jlt.FnDef tp i arg blk) = LLVM.Decl
   { LLVM.declType = undefined
   , LLVM.declName = undefined
   , LLVM.declArgs = undefined
