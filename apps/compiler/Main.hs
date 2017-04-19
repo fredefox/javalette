@@ -3,6 +3,7 @@ module Main ( main ) where
 import Control.Monad
 import System.IO
 import System.Environment
+import System.Exit
 
 import Javalette.Syntax
 import qualified Javalette.Parser as Parser
@@ -10,18 +11,23 @@ import qualified Javalette.TypeChecking as TypeChecking
 import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 import Javalette.PrettyPrint
+import qualified Javalette.Compiler as Compiler (compile)
 
 -- | Runs the compiler on all files given as arguments.
 main :: IO ()
 main = do
   inp <- parseInput
-  mapM_ (handleErrors . compile) inp
+  mapM_ compile inp
 
-handleErrors t =case t of
+handleErrors :: Pretty err => Either err t -> IO t
+handleErrors errOrT = case errOrT of
     Left err  -> do
       putStrLnErr "ERROR"
       prettyPrint err
-    Right{} -> putStrLnErr "OK"
+      exitFailure
+    Right t -> do
+      putStrLnErr "OK"
+      return t
 
 -- TODO: We might like to do something more fancy (e.g. using
 -- optparse-applicative)
@@ -39,10 +45,13 @@ instance Pretty CompilerErr where
     TypeErr err'  -> text "TYPE ERROR:" <+> pPrint err'
 
 -- | Parses and typechecks a program.
-compile :: String -> Either CompilerErr ()
+compile :: String -> IO ()
 compile s = do
-  p <- parseProgram s
-  typecheck p
+  p <- handleErrors $ do
+    p <- parseProgram s
+    typecheck p
+    return p
+  Compiler.compile "/dev/null" p
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> Either CompilerErr ()

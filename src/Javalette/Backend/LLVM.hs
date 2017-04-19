@@ -24,7 +24,10 @@ compile fp = ioStuff . runCompiler . compileProg
   where
     ioStuff :: Either CompilerErr LLVM.Prog -> IO ()
     ioStuff (Left e)  = putStrLnStdErr . prettyShow $ e
-    ioStuff (Right p) = writeFile fp (prettyShow p)
+    ioStuff (Right p) = do
+      print p
+      putStrLn (prettyShow p)
+      writeFile fp (prettyShow p)
 
 putStrLnStdErr :: String -> IO ()
 putStrLnStdErr = hPutStrLn stderr
@@ -66,20 +69,30 @@ data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.
   { variables :: Variables
+  , maxLabel :: Int
   }
 
-assignName :: Jlt.Ident -> Compiler LLVM.Name
+incrLabel :: Compiler Int
+incrLabel = do
+  lbl <- maxLabel <$> get
+  modify (\e -> e { maxLabel = succ lbl })
+  return lbl
+
+newLabel :: Compiler LLVM.Label
+newLabel = LLVM.Label . ('l':) . show <$> incrLabel
+
+assignName :: Jlt.Ident -> Compiler LLVM.VarName
 assignName i = do
   vars <- variables <$> get
   let (s, v) = newVar i vars
   modify (\e -> e { variables = s })
   return (intToName v)
 
-intToName :: Int -> LLVM.Name
-intToName = LLVM.Name . ('v':) . show
+intToName :: Int -> LLVM.VarName
+intToName = LLVM.VarName . ('v':) . show
 
 emptyEnv :: Env
-emptyEnv = Env emptyScope
+emptyEnv = Env emptyScope 0
 
 instance Pretty CompilerErr where
   pPrint err = case err of
@@ -91,17 +104,21 @@ runCompiler :: Compiler a -> Either CompilerErr a
 runCompiler = runExcept . (`evalStateT` emptyEnv)
 
 compileProg :: Jlt.Prog -> Compiler LLVM.Prog
-compileProg (Jlt.Program defs) = do
-  gVars <- _collectGlobals
+compileProg p@(Jlt.Program defs) = do
+  gVars <- collectGlobals p
   let decls = map defToDecl defs
+  -- NOTE I don't think we actually need to persist the state across the
+  -- different topdefs.
   pDefs <- mapM trTopDef defs
   return LLVM.Prog
     { LLVM.pGlobals = gVars
-    , LLVM.pDecls   = decls ++ builtinDecls
+    , LLVM.pDecls   = builtinDecls ++ decls
     , LLVM.pDefs    = pDefs
     }
-  where
-    _collectGlobals = undefined
+
+-- | TODO Stub!
+collectGlobals :: Jlt.Prog -> Compiler [LLVM.GlobalVar]
+collectGlobals _ = return []
 
 trTopDef :: Jlt.TopDef -> Compiler LLVM.Def
 trTopDef (Jlt.FnDef t i args blk) = do
@@ -115,10 +132,7 @@ trTopDef (Jlt.FnDef t i args blk) = do
     , LLVM.defBlks = LLVM.Blk entry vars : todo
     }
     where
-      morestuff = undefined
-
-newLabel :: Compiler LLVM.Label
-newLabel = undefined
+      morestuff _blk = return []
 
 pushScope, popScope :: Compiler ()
 pushScope = modify (\e -> e { variables = push . variables $ e })
@@ -160,10 +174,7 @@ varsStmt s = case s of
 varDecl :: Jlt.Type -> Jlt.Item -> Compiler LLVM.Instruction
 varDecl t itm = do
   nm <- assignName (itemName itm)
-  return (alloca (trType t) nm)
-
-alloca :: LLVM.Type -> LLVM.Name -> LLVM.Instruction
-alloca = undefined
+  return (LLVM.Alloca (trType t) nm)
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
@@ -179,7 +190,8 @@ trArg (Jlt.Argument t _) = trType t
 trType :: Jlt.Type -> LLVM.Type
 trType t = case t of
   Jlt.Int -> LLVM.I64
-  Jlt.Doub -> undefined
+  -- TODO This is wrong!
+  Jlt.Doub -> LLVM.I64
   Jlt.Bool -> undefined
   Jlt.Void -> LLVM.Void
   Jlt.String -> undefined
@@ -196,7 +208,7 @@ builtinDecls =
 
 defToDecl :: Jlt.TopDef -> LLVM.Decl
 defToDecl (Jlt.FnDef tp i arg blk) = LLVM.Decl
-  { LLVM.declType = undefined
-  , LLVM.declName = undefined
-  , LLVM.declArgs = undefined
+  { LLVM.declType = trType tp
+  , LLVM.declName = trName i
+  , LLVM.declArgs = map trArg arg
   }
