@@ -1,4 +1,5 @@
 Backlog
 =======
-bad056 is accepted. This is due to some special case for the
-modulo-operator that we're not handling.
+* Each llvm block must be terminated by a return or a branch
+
+* We should not declared defined functions!
