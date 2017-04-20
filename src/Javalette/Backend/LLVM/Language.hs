@@ -12,7 +12,7 @@ module Javalette.Backend.LLVM.Language
   , Blk(..)
   , Label(..)
   , Instruction(..)
-  , VarName(..)
+  , Reg(..)
   ) where
 
 import Javalette.PrettyPrint
@@ -48,6 +48,7 @@ data Type
   = Void
   | I32
   | I64
+  | Pointer Type
   deriving (Show)
 
 instance Pretty Type where
@@ -55,6 +56,7 @@ instance Pretty Type where
     Void -> text "void"
     I32  -> text "i32"
     I64  -> text "i64"
+    Pointer t0 -> pPrint t0 <> char '*'
 
 data Constant = Constant String deriving (Show)
 
@@ -101,22 +103,40 @@ data Instruction
   -- * Terminator instructions
   = RET | BR
   -- * Arithmetic operations, integers
-  | ADD | SUB | MUL | SDIV | SREM
+  | Add Type Operand Operand Reg
+  | SUB | MUL | SDIV | SREM
   -- * Arithmetic operations, doubles
   | FADD | FSUB | FMUL | FDIV
   -- * Memory access
-  | Alloca Type VarName | LOAD | GETELEMTPTR | STORE
+  | Alloca Type Reg
+  | Load Type Type Reg Reg
+  | GETELEMTPTR | STORE
   -- * Misc.
   | ICMP | FCMP | CALL
   deriving (Show)
 
-data VarName = VarName String deriving (Show)
+type Operand = Either Reg Val
 
-instance Pretty VarName where
-  pPrint (VarName n) = char '%' <> text n
+pPrintOp :: Operand -> Doc
+pPrintOp = either pPrint pPrint
+
+type Val = Int
+
+data Reg = Reg String deriving (Show)
+
+instance Pretty Reg where
+  pPrint (Reg n) = char '%' <> text n
 
 instance Pretty Instruction where
   pPrint i = case i of
     Alloca tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
+    Add ty op0 op1 reg
+      -> pPrint reg <+> char '='
+      <+> text "add" <+> pPrint ty
+      <+> pPrintOp op0 <+> char ',' <+> pPrintOp op1
+    Load ty0 ty1 regSrc regTrg
+      -> pPrint regTrg <+> char '='
+      <+> pPrint ty0 <+> char ',' <+> pPrint ty1
+      <+> pPrint regSrc
     _ -> text "instruction"
 --  pPrintList lvl xs = undefined

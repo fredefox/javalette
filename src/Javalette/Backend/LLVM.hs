@@ -37,32 +37,46 @@ putStrLnStdErr = hPutStrLn stderr
 -------------------
 type Closure a b = Map a b
 -- | The first component represents the next variable name to be used.
-type Scope a b = (b, [Closure a b])
+type Scope = (Int, [Closure Jlt.Ident (LLVM.Reg, LLVM.Type)])
 
 emptyClosure :: Ord a => Closure a b
 emptyClosure = mempty
 
-emptyScope :: Enum b => Scope a b
-emptyScope = (toEnum 0, [])
+emptyScope :: Scope
+emptyScope = (0, [])
 
 -- | Assigns a name to `a` in the current closure and returns it. Do not call
 -- `newVar` on a variable that has already been assigned or on a scope with no
 -- closures.
-newVar :: (Ord a, Enum b) => a -> Scope a b -> (Scope a b, b)
-newVar _ (_, []) = error "Cannot bind variables with no closures at hand"
-newVar a (m, c:cs) = ((succ m, M.insert a m c : cs), m)
+mapVar :: Jlt.Ident -> Jlt.Type -> Variables -> (Variables, (LLVM.Reg, LLVM.Type))
+mapVar _ _ (_, []) = error "Cannot map variables with no closures at hand"
+mapVar a t (i, c:cs) = ((succ i, M.insert a m c : cs), m)
+  where
+    m :: (LLVM.Reg, LLVM.Type)
+    m = (intToName i, trType t)
+
+newVar :: LLVM.Type -> Variables -> (Variables, (LLVM.Reg, LLVM.Type))
+newVar _ (_, []) = error "Cannot create variables with no closures at hand"
+newVar t (i, c:cs) = ((succ i, M.insert anon m c : cs), m)
+  where
+    m = (intToName i, t)
+    -- This is ugly! We may wanna change it so that we have a seperate map for
+    -- going from jlt variable names to llvm variable names and another one for
+    -- looking up info about llvm varibles. The reason for doing this would be
+    -- that not all llvm variables will come from a jlt variable.
+    anon = undefined
 
 -- | Gets whatever `a` is bound to.
-getVar :: Ord a => a -> Scope a b -> Maybe b
+getVar :: Jlt.Ident -> Variables -> Maybe (LLVM.Reg, LLVM.Type)
 getVar a (_, cs) = lookupFirst a cs
 
 lookupFirst :: Ord a => a -> [Map a b] -> Maybe b
-lookupFirst _ [] = undefined
+lookupFirst _ [] = Nothing
 lookupFirst a (x : xs) = case M.lookup a x of
   Nothing -> lookupFirst a xs
   Just b  -> return b
 
-type Variables = Scope Jlt.Ident Int
+type Variables = Scope
 
 data CompilerErr = Generic String
 data Env = Env
@@ -81,15 +95,30 @@ incrLabel = do
 newLabel :: Compiler LLVM.Label
 newLabel = LLVM.Label . ('l':) . show <$> incrLabel
 
-assignName :: Jlt.Ident -> Compiler LLVM.VarName
-assignName i = do
-  vars <- variables <$> get
-  let (s, v) = newVar i vars
-  modify (\e -> e { variables = s })
-  return (intToName v)
+getVariables :: Compiler Variables
+getVariables = variables <$> get
 
-intToName :: Int -> LLVM.VarName
-intToName = LLVM.VarName . ('v':) . show
+assignName :: Jlt.Ident -> Jlt.Type -> Compiler (LLVM.Reg, LLVM.Type)
+assignName i t = do
+  vars <- getVariables
+  let (s, res) = mapVar i t vars
+  modify (\e -> e { variables = s })
+  return res
+
+createVar :: LLVM.Type -> Compiler (LLVM.Reg, LLVM.Type)
+createVar t = do
+  vars <- getVariables
+  let (s, res) = newVar t vars
+  modify (\e -> e { variables = s })
+  return res
+
+lookupIdent :: Jlt.Ident -> Compiler (Maybe (LLVM.Reg, LLVM.Type))
+lookupIdent i = do
+  (_, ms) <- getVariables
+  return $ lookupFirst i ms
+
+intToName :: Int -> LLVM.Reg
+intToName = LLVM.Reg . ('v':) . show
 
 emptyEnv :: Env
 emptyEnv = Env emptyScope 0
@@ -106,13 +135,12 @@ runCompiler = runExcept . (`evalStateT` emptyEnv)
 compileProg :: Jlt.Prog -> Compiler LLVM.Prog
 compileProg p@(Jlt.Program defs) = do
   gVars <- collectGlobals p
-  let decls = map defToDecl defs
   -- NOTE I don't think we actually need to persist the state across the
   -- different topdefs.
   pDefs <- mapM trTopDef defs
   return LLVM.Prog
     { LLVM.pGlobals = gVars
-    , LLVM.pDecls   = builtinDecls ++ decls
+    , LLVM.pDecls   = builtinDecls
     , LLVM.pDefs    = pDefs
     }
 
@@ -122,17 +150,54 @@ collectGlobals _ = return []
 
 trTopDef :: Jlt.TopDef -> Compiler LLVM.Def
 trTopDef (Jlt.FnDef t i args blk) = do
-  entry <- newLabel
   vars <- varsBlk blk
-  todo <- morestuff blk
+  (LLVM.Blk lbl is:bs) <- trBlk blk
   return LLVM.Def
     { LLVM.defType = trType t
     , LLVM.defName = trName i
     , LLVM.defArgs = map trArg args
-    , LLVM.defBlks = LLVM.Blk entry vars : todo
+    , LLVM.defBlks = LLVM.Blk lbl (vars ++ is) : bs
     }
-    where
-      morestuff _blk = return []
+
+trBlk :: Jlt.Blk -> Compiler [LLVM.Blk]
+trBlk (Jlt.Block stmts) = do
+  lbl <- newLabel
+  -- NOTE not sure we should just concat the result of this.
+  is  <- concat <$> mapM trStmt stmts
+  return [LLVM.Blk lbl is]
+
+trStmt :: Jlt.Stmt -> Compiler [LLVM.Instruction]
+trStmt s = case s of
+  Jlt.Empty -> todo
+  Jlt.BStmt b -> todo
+  Jlt.Decl t its -> todo
+  Jlt.Ass i e -> todo
+  Jlt.Incr i -> incr i
+  Jlt.Decr i -> todo
+  Jlt.Ret e -> todo
+  Jlt.VRet -> todo
+  Jlt.Cond e s0 -> todo
+  Jlt.CondElse e s0 s1 -> todo
+  Jlt.While e s0 -> todo
+  Jlt.SExp e -> todo
+  where
+    todo = return []
+
+maybeToErr :: MonadError e m => e -> Maybe a -> m a
+maybeToErr err Nothing  = throwError err
+maybeToErr _   (Just x) = return x
+
+maybeToErr' :: CompilerErr -> Maybe a -> Compiler a
+maybeToErr' = maybeToErr
+
+incr :: Jlt.Ident -> Compiler [LLVM.Instruction]
+incr i = do
+  (xptr, tp) <- lookupIdent i >>= maybeToErr' (Generic "Cannot find var")
+  (xval, _) <- createVar tp
+  return
+    [ LLVM.Load tp (LLVM.Pointer tp) xptr xval
+    , LLVM.Add tp (Left xval) (Right 1) xptr
+    ]
 
 pushScope, popScope :: Compiler ()
 pushScope = modify (\e -> e { variables = push . variables $ e })
@@ -173,8 +238,8 @@ varsStmt s = case s of
 
 varDecl :: Jlt.Type -> Jlt.Item -> Compiler LLVM.Instruction
 varDecl t itm = do
-  nm <- assignName (itemName itm)
-  return (LLVM.Alloca (trType t) nm)
+  (reg, tp) <- assignName (itemName itm) t
+  return (LLVM.Alloca tp reg)
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
@@ -205,10 +270,3 @@ builtinDecls =
     , LLVM.declArgs = [LLVM.I32]
     }
   ]
-
-defToDecl :: Jlt.TopDef -> LLVM.Decl
-defToDecl (Jlt.FnDef tp i arg blk) = LLVM.Decl
-  { LLVM.declType = trType tp
-  , LLVM.declName = trName i
-  , LLVM.declArgs = map trArg arg
-  }
