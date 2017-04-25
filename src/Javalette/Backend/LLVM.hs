@@ -13,6 +13,7 @@ import Javalette.Backend.Internals
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
+import Javalette.Backend.LLVM.Renamer (rename)
 
 backend :: Backend
 backend = Backend
@@ -48,7 +49,7 @@ mapVar :: Jlt.Ident -> Jlt.Type -> Compiler Jlt.Ident
 mapVar a t = do
   vars <- getVariables
   (c:cs) <- case vars of
-    [] -> error "Cannot map variables with no closures at hand"
+    [] -> throwError (Generic "Cannot map variables with no closures at hand")
     _ -> return vars
   i <- fresh
   let b = intToIdent i
