@@ -13,6 +13,8 @@ module Javalette.Backend.LLVM.Language
   , Label(..)
   , Instruction(..)
   , Reg(..)
+  , Operand
+  , Val
   ) where
 
 import Javalette.PrettyPrint
@@ -110,7 +112,8 @@ data Instruction
   -- * Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
-  | GETELEMTPTR | STORE
+  | GETELEMTPTR
+  | Store Type Operand Type Reg
   -- * Misc.
   | ICMP | FCMP | CALL
   deriving (Show)
@@ -138,5 +141,8 @@ instance Pretty Instruction where
       -> pPrint regTrg <+> char '='
       <+> pPrint ty0 <+> char ',' <+> pPrint ty1
       <+> pPrint regSrc
+    Store tpOp op tpReg reg
+      -> text "store" <+> pPrint tpOp <+> pPrint op
+      <+> char ',' <+> pPrint tpReg <+> pPrint reg
     _ -> text "instruction"
 --  pPrintList lvl xs = undefined

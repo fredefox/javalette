@@ -170,7 +170,9 @@ trStmt :: Jlt.Stmt -> Compiler [LLVM.Instruction]
 trStmt s = case s of
   Jlt.Empty -> todo
   Jlt.BStmt b -> todo
-  Jlt.Decl t its -> todo
+  -- We should have already taken care of allocating all variables (and
+  -- therefore also created a mapping for them)
+  Jlt.Decl tp its -> concat <$> mapM (varInit tp) its
   Jlt.Ass i e -> todo
   Jlt.Incr i -> incr i
   Jlt.Decr i -> todo
@@ -238,8 +240,41 @@ varsStmt s = case s of
 
 varDecl :: Jlt.Type -> Jlt.Item -> Compiler LLVM.Instruction
 varDecl t itm = do
-  (reg, tp) <- assignName (itemName itm) t
+  (reg, tp) <- assignNameItem itm t
   return (LLVM.Alloca tp reg)
+
+-- | Assumes that the item is already initialized and exists in scope.
+varInit :: Jlt.Type -> Jlt.Item -> Compiler [LLVM.Instruction]
+varInit jltType itm = do
+  (reg, tp) <- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
+  let varInit' :: LLVM.Operand -> Compiler [LLVM.Instruction]
+      varInit' op = return . pure $ LLVM.Store tp op (LLVM.Pointer tp) reg
+  case itm of
+    Jlt.NoInit{} -> varInit' (defaultValue jltType)
+    -- Here we must first compute the value of the expression
+    -- and store the result of that in the variable.
+    Jlt.Init _ e -> do
+      (is0, reg0) <- calculateExpression e
+      is1 <- varInit' reg0
+      return (is0 ++ is1)
+  where
+    -- For now we will just assume that the expression is `42`.
+    calculateExpression :: Jlt.Expr -> Compiler ([LLVM.Instruction], LLVM.Operand)
+    calculateExpression _ = return ([], Right 42)
+
+defaultValue :: Jlt.Type -> LLVM.Operand
+defaultValue t = case t of
+  Jlt.Int -> Right 0
+  _   -> todo
+  where
+    todo = error "default llvm value not yet implemented!"
+
+assignNameItem :: Jlt.Item -> Jlt.Type -> Compiler (LLVM.Reg, LLVM.Type)
+assignNameItem itm t = assignName (itemName itm) t
+
+
+lookupItem :: Jlt.Item -> Compiler (Maybe (LLVM.Reg, LLVM.Type))
+lookupItem itm = lookupIdent (itemName itm)
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
