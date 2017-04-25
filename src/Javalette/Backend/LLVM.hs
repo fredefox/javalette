@@ -35,40 +35,40 @@ putStrLnStdErr = hPutStrLn stderr
 -------------------
 -- Closure stuff --
 -------------------
-type Closure a b = Map a b
--- | The first component represents the next variable name to be used.
-type Scope = (Int, [Closure Jlt.Ident (LLVM.Reg, LLVM.Type)])
 
-emptyClosure :: Ord a => Closure a b
-emptyClosure = mempty
+type Scope = [Map Jlt.Ident Jlt.Ident]
 
 emptyScope :: Scope
-emptyScope = (0, [])
+emptyScope = []
 
 -- | Assigns a name to `a` in the current closure and returns it. Do not call
 -- `newVar` on a variable that has already been assigned or on a scope with no
 -- closures.
-mapVar :: Jlt.Ident -> Jlt.Type -> Variables -> (Variables, (LLVM.Reg, LLVM.Type))
-mapVar _ _ (_, []) = error "Cannot map variables with no closures at hand"
-mapVar a t (i, c:cs) = ((succ i, M.insert a m c : cs), m)
+mapVar :: Jlt.Ident -> Jlt.Type -> Compiler Jlt.Ident
+mapVar a t = do
+  vars <- getVariables
+  (c:cs) <- case vars of
+    [] -> error "Cannot map variables with no closures at hand"
+    _ -> return vars
+  i <- fresh
+  let b = intToIdent i
+  putVariables (M.insert a b c : cs)
+  return b
   where
-    m :: (LLVM.Reg, LLVM.Type)
-    m = (intToName i, trType t)
+    intToIdent = Jlt.Ident . ('v':) . show
 
-newVar :: LLVM.Type -> Variables -> (Variables, (LLVM.Reg, LLVM.Type))
-newVar _ (_, []) = error "Cannot create variables with no closures at hand"
-newVar t (i, c:cs) = ((succ i, M.insert anon m c : cs), m)
-  where
-    m = (intToName i, t)
-    -- This is ugly! We may wanna change it so that we have a seperate map for
-    -- going from jlt variable names to llvm variable names and another one for
-    -- looking up info about llvm varibles. The reason for doing this would be
-    -- that not all llvm variables will come from a jlt variable.
-    anon = undefined
+fresh :: Compiler Int
+fresh = undefined
 
--- | Gets whatever `a` is bound to.
-getVar :: Jlt.Ident -> Variables -> Maybe (LLVM.Reg, LLVM.Type)
-getVar a (_, cs) = lookupFirst a cs
+putVariables :: Variables -> Compiler ()
+putVariables v = modify (\e -> e { variables = v })
+
+newVar :: LLVM.Type -> Compiler Jlt.Ident
+newVar t = do
+  vars <- getVariables
+  case vars of
+    [] -> error "Cannot create variables with no closures at hand"
+    (c:cs) -> undefined
 
 lookupFirst :: Ord a => a -> [Map a b] -> Maybe b
 lookupFirst _ [] = Nothing
@@ -96,26 +96,12 @@ newLabel :: Compiler LLVM.Label
 newLabel = LLVM.Label . ('l':) . show <$> incrLabel
 
 getVariables :: Compiler Variables
-getVariables = variables <$> get
+getVariables = gets variables
 
-assignName :: Jlt.Ident -> Jlt.Type -> Compiler (LLVM.Reg, LLVM.Type)
-assignName i t = do
-  vars <- getVariables
-  let (s, res) = mapVar i t vars
-  modify (\e -> e { variables = s })
-  return res
-
-createVar :: LLVM.Type -> Compiler (LLVM.Reg, LLVM.Type)
-createVar t = do
-  vars <- getVariables
-  let (s, res) = newVar t vars
-  modify (\e -> e { variables = s })
-  return res
-
-lookupIdent :: Jlt.Ident -> Compiler (Maybe (LLVM.Reg, LLVM.Type))
+lookupIdent :: Jlt.Ident -> Compiler (Maybe Jlt.Ident)
 lookupIdent i = do
-  (_, ms) <- getVariables
-  return $ lookupFirst i ms
+  vars <- getVariables
+  return $ lookupFirst i vars
 
 intToName :: Int -> LLVM.Reg
 intToName = LLVM.Reg . ('v':) . show
@@ -133,16 +119,41 @@ runCompiler :: Compiler a -> Either CompilerErr a
 runCompiler = runExcept . (`evalStateT` emptyEnv)
 
 compileProg :: Jlt.Prog -> Compiler LLVM.Prog
-compileProg p@(Jlt.Program defs) = do
-  gVars <- collectGlobals p
-  -- NOTE I don't think we actually need to persist the state across the
-  -- different topdefs.
-  pDefs <- mapM trTopDef defs
-  return LLVM.Prog
-    { LLVM.pGlobals = gVars
-    , LLVM.pDecls   = builtinDecls
-    , LLVM.pDefs    = pDefs
-    }
+compileProg = aux . (`evalState` initRS) . alphaRenameProg
+  where
+    aux p@(Jlt.Program defs) = do
+      gVars <- collectGlobals p
+      -- NOTE I don't think we actually need to persist the state across the
+      -- different topdefs.
+      pDefs <- mapM trTopDef defs
+      return LLVM.Prog
+        { LLVM.pGlobals = gVars
+        , LLVM.pDecls   = builtinDecls
+        , LLVM.pDefs    = pDefs
+        }
+    initRS :: RenamerState
+    initRS = RS 0 mempty
+
+-- * Alpha renaming
+
+type Renamer a = State RenamerState a
+
+type SymbolTable a b = [Map a b]
+
+data RenamerState = RS Int (SymbolTable Jlt.Ident Jlt.Ident)
+
+alphaRenameProg :: Jlt.Prog -> Renamer Jlt.Prog
+alphaRenameProg (Jlt.Program defs) = Jlt.Program <$> mapM alphaRenameTopDefs defs
+
+alphaRenameTopDefs :: Jlt.TopDef -> Renamer Jlt.TopDef
+alphaRenameTopDefs (Jlt.FnDef tp id args blk) = undefined
+
+lookupName :: Jlt.Ident -> Renamer (Maybe Jlt.Ident)
+lookupName i = (\(RS _ m) -> lookupFirst i m) <$> get
+
+
+
+
 
 -- | TODO Stub!
 collectGlobals :: Jlt.Prog -> Compiler [LLVM.GlobalVar]
@@ -150,13 +161,12 @@ collectGlobals _ = return []
 
 trTopDef :: Jlt.TopDef -> Compiler LLVM.Def
 trTopDef (Jlt.FnDef t i args blk) = do
-  vars <- varsBlk blk
   (LLVM.Blk lbl is:bs) <- trBlk blk
   return LLVM.Def
     { LLVM.defType = trType t
     , LLVM.defName = trName i
     , LLVM.defArgs = map trArg args
-    , LLVM.defBlks = LLVM.Blk lbl (vars ++ is) : bs
+    , LLVM.defBlks = LLVM.Blk lbl is : bs
     }
 
 trBlk :: Jlt.Blk -> Compiler [LLVM.Blk]
@@ -169,19 +179,19 @@ trBlk (Jlt.Block stmts) = do
 trStmt :: Jlt.Stmt -> Compiler [LLVM.Instruction]
 trStmt s = case s of
   Jlt.Empty -> todo
-  Jlt.BStmt b -> todo
+  Jlt.BStmt _b -> todo
   -- We should have already taken care of allocating all variables (and
   -- therefore also created a mapping for them)
   Jlt.Decl tp its -> concat <$> mapM (varInit tp) its
-  Jlt.Ass i e -> todo
+  Jlt.Ass _i _e -> todo
   Jlt.Incr i -> incr i
-  Jlt.Decr i -> todo
-  Jlt.Ret e -> todo
+  Jlt.Decr _i -> todo
+  Jlt.Ret _e -> todo
   Jlt.VRet -> todo
-  Jlt.Cond e s0 -> todo
-  Jlt.CondElse e s0 s1 -> todo
-  Jlt.While e s0 -> todo
-  Jlt.SExp e -> todo
+  Jlt.Cond _e _s0 -> todo
+  Jlt.CondElse _e _s0 _s1 -> todo
+  Jlt.While _e _s0 -> todo
+  Jlt.SExp _e -> todo
   where
     todo = return []
 
@@ -194,8 +204,8 @@ maybeToErr' = maybeToErr
 
 incr :: Jlt.Ident -> Compiler [LLVM.Instruction]
 incr i = do
-  (xptr, tp) <- lookupIdent i >>= maybeToErr' (Generic "Cannot find var")
-  (xval, _) <- createVar tp
+  (xptr, tp) <- undefined -- lookupIdent i >>= maybeToErr' (Generic "Cannot find var")
+  (xval, _) <- undefined -- createVar tp
   return
     [ LLVM.Load tp (LLVM.Pointer tp) xptr xval
     , LLVM.Add tp (Left xval) (Right 1) xptr
@@ -205,13 +215,13 @@ pushScope, popScope :: Compiler ()
 pushScope = modify (\e -> e { variables = push . variables $ e })
   where
     push :: Variables -> Variables
-    push (m, xs) = (m, emptyClosure : xs)
+    push = ((:) mempty)
 
 popScope = modify (\e -> e { variables = pop . variables $ e })
   where
     pop :: Variables -> Variables
-    pop (_, []) = error "Cannot pop on empty environment"
-    pop (m, _:xs) = (m, xs)
+    pop [] = error "Cannot pop on empty environment"
+    pop (_:xs) = xs
 
 withNewScope :: Compiler a -> Compiler a
 withNewScope act = do
@@ -240,13 +250,13 @@ varsStmt s = case s of
 
 varDecl :: Jlt.Type -> Jlt.Item -> Compiler LLVM.Instruction
 varDecl t itm = do
-  (reg, tp) <- assignNameItem itm t
+  (reg, tp) <- undefined -- assignNameItem itm t
   return (LLVM.Alloca tp reg)
 
 -- | Assumes that the item is already initialized and exists in scope.
 varInit :: Jlt.Type -> Jlt.Item -> Compiler [LLVM.Instruction]
 varInit jltType itm = do
-  (reg, tp) <- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
+  (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let varInit' :: LLVM.Operand -> Compiler [LLVM.Instruction]
       varInit' op = return . pure $ LLVM.Store tp op (LLVM.Pointer tp) reg
   case itm of
@@ -269,11 +279,11 @@ defaultValue t = case t of
   where
     todo = error "default llvm value not yet implemented!"
 
-assignNameItem :: Jlt.Item -> Jlt.Type -> Compiler (LLVM.Reg, LLVM.Type)
-assignNameItem itm t = assignName (itemName itm) t
+assignNameItem :: Jlt.Item -> Jlt.Type -> Compiler Jlt.Ident
+assignNameItem itm t = mapVar (itemName itm) t
 
 
-lookupItem :: Jlt.Item -> Compiler (Maybe (LLVM.Reg, LLVM.Type))
+lookupItem :: Jlt.Item -> Compiler (Maybe Jlt.Ident)
 lookupItem itm = lookupIdent (itemName itm)
 
 itemName :: Jlt.Item -> Jlt.Ident
