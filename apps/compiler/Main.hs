@@ -54,7 +54,7 @@ compile s = do
   Compiler.compile "/dev/null" p
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
-typecheck :: Prog -> Either CompilerErr ()
+typecheck :: Prog -> Either CompilerErr Prog
 typecheck = inLeft TypeErr . TypeChecking.typecheck
 
 -- | Wraps the error returned by `Parser.parse`.

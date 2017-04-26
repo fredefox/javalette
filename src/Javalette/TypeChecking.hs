@@ -22,10 +22,11 @@ import qualified Javalette.Syntax as AST
 import Javalette.PrettyPrint
 
 -- | Performs typechecking of a progrma
-typecheck :: Prog -> Either TypeCheckingError ()
+typecheck :: Prog -> Either TypeCheckingError Prog
 typecheck p = evalTypeChecker $ do
-  typechk p
+  pAnn <- typechk p
   staticControlFlowCheck p
+  return pAnn
 
 -- * Type errors
 
@@ -65,13 +66,13 @@ class TypeCheck a where
   -- but use suitable constraints like MonadError etc..
   -- TODO: Some elements of the AST need more arguments to be type-checked.
   -- So this type-class is sort of less than ideal.
-  typechk :: a -> TypeChecker ()
-  default typechk :: Infer a => a -> TypeChecker ()
-  typechk = void . infer
+  typechk :: a -> TypeChecker a
+  default typechk :: Infer a => a -> TypeChecker a
+  typechk = fmap fst . infer
 
 -- | This class defines something which type can be inferred.
 class TypeCheck a => Infer a where
-  infer :: a -> TypeChecker Type
+  infer :: a -> TypeChecker (a, Type)
 
 -- | The environment used during type-checking.
 data Env = Env
@@ -184,18 +185,20 @@ mkFunEnv :: [TopDef] -> Definitions
 mkFunEnv = M.fromList . map (\def@(FnDef _ i _ _) -> (i, Def def))
 
 instance TypeCheck Prog where
-  typechk (Program defs)
-    =  unionDefs (mkFunEnv defs)
-    >> mapM_ typechk defs
+  typechk (Program defs) = do
+    unionDefs (mkFunEnv defs)
+    t <- mapM typechk defs
+    return (Program t)
 
 -- | `typecheck` checks that all the return-statements in the functions definition has the
 -- specified type. Note that this does *not* guarantee that all paths return a
 -- value of the given type. For this you need `staticControlFlowCheck`.
 instance TypeCheck TopDef where
-  typechk (FnDef t _ args blk) = do
+  typechk (FnDef t i args blk) = do
     _ <- newScope
     _ <- addArgs args
-    typecheckBlk t blk
+    blk' <- typecheckBlk t blk
+    return (FnDef t i args blk')
 
 -- I don't like that type-checking does not have the same interface for all
 -- parts of the language. A solution to this would be to expand state to also
@@ -203,55 +206,62 @@ instance TypeCheck TopDef where
 -- because there are many situations where that will then not be needed.
 -- instance TypeCheck Blk where
 -- | Almost a `TypeCheck` instance for block-statements. See `typecheckStmts`.
-typecheckBlk :: Type -> Blk -> TypeChecker ()
-typecheckBlk t (Block stms) = mapM_ (typecheckStmt t) stms
+typecheckBlk :: Type -> Blk -> TypeChecker Blk
+typecheckBlk t (Block stms) = Block <$> mapM (typecheckStmt t) stms
 
 -- Almost the `TypeCheck` instance for `Stmt`. We check that *if* there is a
 -- return-statement, then the inferred type of that expression has the given
 -- type.
-typecheckStmt :: Type -> Stmt -> TypeChecker ()
+typecheckStmt :: Type -> Stmt -> TypeChecker Stmt
 typecheckStmt t s = case s of
-  Empty          -> return ()
-  BStmt blk      -> newScope >> typecheckBlk t blk
-  Decl t0 its    -> do
+  Empty          -> return Empty
+  BStmt blk      -> return s <* (newScope >> typecheckBlk t blk)
+  Decl t0 its    -> return s <* do
     mapM_ (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
   Ass i e        -> do
     ti <- lookupTypeVar i
-    te <- infer e
+    (e', te) <- infer e
     unless (ti == te)
       $ throwError TypeMismatch
-  Incr i         -> do
+    return (Ass i e')
+  Incr i         -> return s <* do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-  Decr i         -> do
+  Decr i         -> return s <* do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
   Ret e          -> do
-    t' <- infer e
+    (e', t') <- infer e
     unless (t == t')
       $ throwError TypeMismatch
-  VRet           -> unless (t == Void) $ throwError TypeMismatch
+    return (Ret e')
+  VRet           -> return s <*
+    unless (t == Void) (throwError TypeMismatch)
   Cond e s0      -> do
-    inferBoolean e
-    typecheckStmt t s0
+    e' <- inferBoolean e
+    s0' <- typecheckStmt t s0
+    return (Cond e' s0')
   CondElse e s0 s1 -> do
-    inferBoolean e
-    typecheckStmt t s0
-    typecheckStmt t s1
+    e' <- inferBoolean e
+    s0' <- typecheckStmt t s0
+    s1' <- typecheckStmt t s1
+    return (CondElse e' s0' s1')
   While e s0 -> do
-    inferBoolean e
-    typecheckStmt t s0
-  SExp e -> typechk e
+    e' <- inferBoolean e
+    s0' <- typecheckStmt t s0
+    return (While e' s0')
+  SExp e -> SExp <$> typechk e
 
 -- | Helper function that checks that an expression has a boolean type.
-inferBoolean :: Expr -> TypeChecker ()
+inferBoolean :: Expr -> TypeChecker Expr
 inferBoolean e = do
-  te <- infer e
+  (e', te) <- infer e
   unless (te == AST.Bool)
     $ throwError TypeMismatch
+  return e'
 
 -- | Converts a `Maybe` to an error in `MonadError`.
 maybeToError :: MonadError e m => e -> Maybe a -> m a
@@ -313,13 +323,13 @@ typecheckItem :: Type -> Item -> TypeChecker ()
 typecheckItem t i = case i of
   NoInit{} -> return ()
   Init _ e -> do
-    t' <- infer e
+    (_, t') <- infer e
     unless (t == t')
       $ throwError TypeMismatch
 
 instance TypeCheck Expr where
 instance Infer Expr where
-  infer e = case e of
+  infer e = annotate e <$> case e of
     EVar i -> lookupTypeVar i
     ELitInt{} -> return AST.Int
     ELitDoub{} -> return AST.Doub
@@ -331,12 +341,12 @@ instance Infer Expr where
       return t
     EString{} -> return AST.String
     Neg e0 -> do
-      t <- infer e0
+      (_, t) <- infer e0
       unless (isNumeric t)
         $ throwError $ GenericError "Plz, can't negate non-numeric"
       return t
     Not e0 -> do
-      t <- infer e0
+      (_, t) <- infer e0
       unless (t == AST.Bool)
         $ throwError $ GenericError "Plz, can't not non-boolean"
       return t
@@ -348,20 +358,24 @@ instance Infer Expr where
     ERel e0 op e1 -> checkRel op e0 e1 >> return AST.Bool
     EAnd e0 e1 -> checkBinOp (== AST.Bool) e0 e1
     EOr e0 e1 -> checkBinOp (== AST.Bool) e0 e1
+    EAnn tp _ -> return tp
+
+annotate :: Expr -> Type -> (Expr, Type)
+annotate e t = (EAnn t e, t)
 
 -- | Helper-function for typechecking `RelOp`.
 checkRel :: RelOp -> Expr -> Expr -> TypeChecker ()
 checkRel _ e0 e1 = do
-  t0 <- infer e0
-  t1 <- infer e1
+  (_, t0) <- infer e0
+  (_, t1) <- infer e1
   unless (t0 == t1) throwMixErr
 
 -- | Helper-function for typechecking binary operators.
 checkBinOp :: (Type -> Bool) -> Expr -> Expr -> TypeChecker Type
 checkBinOp p e0 e1 = do
-      t0 <- infer e0
+      (_, t0) <- infer e0
       unless (p t0) throwNumErr
-      t1 <- infer e1
+      (_, t1) <- infer e1
       unless (p t1) throwNumErr
       unless (t1 == t0) throwMixErr
       return t1
@@ -395,7 +409,7 @@ zipWithMRagged_ e f (x : xs) ys = case ys of
 -- | Checks that an expression matches the type of an argument.
 argMatch :: Expr -> Arg -> TypeChecker ()
 argMatch e (Argument t _) = do
-  t' <- infer e
+  (_, t') <- infer e
   unless (t == t')
     $ throwError TypeMismatch
 
@@ -445,7 +459,7 @@ inferStmt s = case s of
     return Never
   Incr i         -> incr i >> return Never
   Decr i         -> decr i >> return Never
-  Ret e          -> Always <$> infer e
+  Ret e          -> Always . snd <$> infer e
   VRet           -> return (Always AST.Void)
   Cond e s0      -> do
     v <- staticValue e
@@ -556,6 +570,7 @@ staticValue e = case e of
     EAnd{} -> stub
     EOr{}  -> stub
     EApp{} -> stub
+    EAnn _ e0 -> staticValue e0
     where
       changeVal f m = fmap f <$> m
       valNot (ValBool b) = ValBool (not b)
