@@ -46,9 +46,10 @@ The symbols used in Javalette are the following:
   | ( | ) | , | {
   | } | ; | = | ++
   | -- | - | ! | &&
-  | || | + | * | /
-  | % | < | <= | >
-  | >= | == | != | 
+  | || | {- | -} | +
+  | * | / | % | <
+  | <= | > | >= | ==
+  | != |  |  | 
 
 ===Comments===
 Single-line comments begin with #, //.Multiple-line comments are  enclosed with /* and */.
