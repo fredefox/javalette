@@ -149,13 +149,13 @@ trStmt fallThrough s = case s of
   Jlt.VRet -> llvmVoidReturn >>= emitInstructions
   Jlt.Cond e s0 -> do
     t <- newLabel
-    condAlt e t fallThrough
+    cond e t fallThrough
     emitLabel t
     cont s0
   Jlt.CondElse e s0 s1 -> do
     t <- newLabel
     f <- newLabel
-    condAlt e t f
+    cond e t f
     emitLabel t
     cont s0
     emitLabel f
@@ -164,7 +164,7 @@ trStmt fallThrough s = case s of
     lblCond <- newLabelNamed "whileCond"
     lblBody <- newLabelNamed "whileBody"
     emitLabel lblCond
-    condAlt e lblBody fallThrough
+    cond e lblBody fallThrough
     emitLabel lblBody
     cont s0
   Jlt.SExp e -> trExpr e
@@ -192,11 +192,6 @@ llvmReturn e = do
 
 llvmVoidReturn :: MonadCompile m => m [LLVM.Instruction]
 llvmVoidReturn = undefined
-
-condAlt
-  :: MonadCompile m
-  => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
-condAlt e t f = cond e t f
 
 cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
