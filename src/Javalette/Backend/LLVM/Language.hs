@@ -116,6 +116,7 @@ data Instruction
   | Store Type Operand Type Reg
   -- * Misc.
   | ICMP | FCMP | CALL
+  | Pseudo String
   deriving (Show)
 
 type Operand = Either Reg Val
@@ -142,7 +143,8 @@ instance Pretty Instruction where
       <+> pPrint ty0 <+> char ',' <+> pPrint ty1
       <+> pPrint regSrc
     Store tpOp op tpReg reg
-      -> text "store" <+> pPrint tpOp <+> pPrint op
+      -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <+> char ',' <+> pPrint tpReg <+> pPrint reg
+    Pseudo s -> char '{' <> text s <> char '}'
     _ -> text "instruction"
 --  pPrintList lvl xs = undefined

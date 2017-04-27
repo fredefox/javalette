@@ -7,8 +7,6 @@ import Data.Maybe (fromMaybe)
 
 import Javalette.Syntax as Jlt
 
-import Debug.Trace
-
 -- * Exports
 rename :: Prog -> Prog
 rename = rProg
@@ -72,7 +70,7 @@ renameIdent a = do
   return b
 
 lookupIdent :: Ident -> R (Maybe Ident)
-lookupIdent idnt = traceShowId idnt `seq` (lookupFirst idnt . traceShowId <$> getVars)
+lookupIdent idnt = lookupFirst idnt <$> getVars
 
 lookupIdentErr :: Ident -> R Ident
 lookupIdentErr i
@@ -127,7 +125,7 @@ rStmtM s = case s of
   SExp e -> SExp <$> rExprM e
 
 rItemM :: Item -> R Item
-rItemM itm = traceShowId <$> case trace "renaming" (traceShowId itm) of
+rItemM itm = case itm of
   NoInit i -> NoInit <$> renameIdent i
   Init i e -> Init <$> renameIdent i <*> rExprM e
 
@@ -145,5 +143,6 @@ rExprM e = case e of
   ERel e0 op e1 -> ERel <$> rExprM e0 <*> pure op <*> rExprM e1
   EAnd e0 e1 -> EAnd <$> rExprM e0 <*> rExprM e1
   EOr e0 e1 -> EOr <$> rExprM e0 <*> rExprM e1
+  EAnn tp e0 -> EAnn tp <$> rExprM e0
   where
     ret = return e

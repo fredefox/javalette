@@ -47,11 +47,8 @@ instance Pretty CompilerErr where
 -- | Parses and typechecks a program.
 compile :: String -> IO ()
 compile s = do
-  p <- handleErrors $ do
-    p <- parseProgram s
-    typecheck p
-    return p
-  Compiler.compile "/dev/null" p
+  pAnnt <- handleErrors $ parseProgram s >>= typecheck
+  Compiler.compile "/dev/null" pAnnt
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> Either CompilerErr Prog
