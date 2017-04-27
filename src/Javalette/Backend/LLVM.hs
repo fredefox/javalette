@@ -11,6 +11,7 @@ import Control.Monad.Writer
 import System.IO
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.List
 
 import Javalette.Backend.Internals
 import qualified Javalette.Syntax as Jlt
@@ -65,7 +66,11 @@ instance Pretty CompilerErr where
 
 type Compiler a = StateT Env (Except CompilerErr) a
 
-type MonadCompile m = (MonadState Env m, MonadError CompilerErr m)
+type MonadCompile m =
+  ( MonadWriter [AlmostInstruction] m
+  , MonadState Env m
+  , MonadError CompilerErr m
+  )
 
 runCompiler :: Compiler a -> Either CompilerErr a
 runCompiler = runExcept . (`evalStateT` emptyEnv)
@@ -89,7 +94,7 @@ collectGlobals _ = []
 
 trTopDef :: Jlt.TopDef -> Either CompilerErr LLVM.Def
 trTopDef (Jlt.FnDef t i args blk) = do
-  bss <- runCompiler $ fmap almostToBlks $ execWriterT $ do
+  bss <- fmap almostToBlks $ runCompiler $ execWriterT $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
@@ -103,7 +108,7 @@ trTopDef (Jlt.FnDef t i args blk) = do
     }
 
 trBlk
-  :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
+  :: MonadCompile m
   => LLVM.Label -> Jlt.Blk -> m ()
 trBlk fallthrough (Jlt.Block stmts) = mapM_ (trStmt fallthrough) stmts
 
@@ -131,16 +136,16 @@ almostToBlks (x : xs) = synth $ case x of
 -- But this is also the type:
 --     Jlt.Stmt -> WriterT AlmostInstruction Compiler ()
 trStmt
-  :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
+  :: MonadCompile m
   => LLVM.Label -> Jlt.Stmt -> m ()
 trStmt fallThrough s = case s of
   Jlt.Empty -> return ()
   Jlt.BStmt b -> trBlk fallThrough b
   Jlt.Decl typ its -> mapM_ (varInit typ) its
-  Jlt.Ass i e -> assign i e >>= emitInstructions
+  Jlt.Ass i e -> assign i e
   Jlt.Incr i -> incr i >>= emitInstructions
   Jlt.Decr i -> decr i >>= emitInstructions
-  Jlt.Ret e -> llvmReturn e >>= emitInstructions
+  Jlt.Ret e -> llvmReturn e
   Jlt.VRet -> llvmVoidReturn >>= emitInstructions
   Jlt.Cond e s0 -> do
     t <- newLabel
@@ -162,7 +167,7 @@ trStmt fallThrough s = case s of
     condAlt e lblBody fallThrough
     emitLabel lblBody
     cont s0
-  Jlt.SExp e -> trExpr e >>= emitInstructions
+  Jlt.SExp e -> trExpr e
   where
     cont = trStmt fallThrough
 
@@ -172,26 +177,32 @@ emitInstructions = tell . map Right
 emitLabel :: MonadWriter [Either a s] m => a -> m ()
 emitLabel = tell . pure . Left
 
-assign :: MonadCompile m => Jlt.Ident -> Jlt.Expr -> m [LLVM.Instruction]
+assign :: MonadCompile m
+  => Jlt.Ident -> Jlt.Expr -> m ()
 assign (Jlt.Ident s) e = do
-  (is, reg) <- resultOfExpression e
-  return $ is ++ [LLVM.Pseudo ("store " ++ prettyShow reg ++ " into " ++ s)]
+  reg <- resultOfExpression e
+  emitInstructions [LLVM.Pseudo ("store " ++ prettyShow reg ++ " into " ++ s)]
 
-llvmReturn :: MonadCompile m => Jlt.Expr -> m [LLVM.Instruction]
-llvmReturn _ = return [LLVM.Pseudo "return"]
+llvmReturn
+  :: MonadCompile m
+  => Jlt.Expr -> m ()
+llvmReturn e = do
+  op <- resultOfExpression e
+  emitInstructions [LLVM.Pseudo $ "return " ++ show op]
 
 llvmVoidReturn :: MonadCompile m => m [LLVM.Instruction]
 llvmVoidReturn = undefined
 
 condAlt
-  :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
+  :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
-condAlt e t f = cond e t f >>= emitInstructions
+condAlt e t f = cond e t f
 
-cond :: MonadCompile m => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m [LLVM.Instruction]
+cond :: MonadCompile m
+  => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
 cond e (LLVM.Label t) (LLVM.Label f) = do
-  (is, op) <- resultOfExpression e
-  return $ is ++ [LLVM.Pseudo $ "if " ++ prettyShow op ++ " then " ++ t ++ " else " ++ f]
+  op <- resultOfExpression e
+  emitInstructions [LLVM.Pseudo $ "if " ++ prettyShow op ++ " then " ++ t ++ " else " ++ f]
 
 incr, decr :: MonadCompile m => Jlt.Ident -> m [LLVM.Instruction]
 incr i = do
@@ -211,30 +222,33 @@ newReg = return (LLVM.Reg "stub")
 
 -- | Assumes that the item is already initialized and exists in scope.
 varInit
-  :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
+  :: MonadCompile m
   => Jlt.Type -> Jlt.Item -> m ()
-varInit jltType itm = (>>= emitInstructions) $ do
+varInit jltType itm = do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
       tp = trType jltType
       reg :: LLVM.Reg
       reg = trIdent . itemName $ itm
-      varInit' :: MonadCompile m => LLVM.Operand -> m [LLVM.Instruction]
-      varInit' op = return . pure $ LLVM.Store tp op (LLVM.Pointer tp) reg
+      varInit'
+        :: MonadCompile m
+        => LLVM.Operand -> m ()
+      varInit' op = emitInstructions $ pure $ LLVM.Store tp op (LLVM.Pointer tp) reg
   case itm of
     Jlt.NoInit{} -> varInit' (defaultValue jltType)
     -- Here we must first compute the value of the expression
     -- and store the result of that in the variable.
     Jlt.Init _ e -> do
-      (is0, reg0) <- resultOfExpression e
-      is1 <- varInit' reg0
-      return (is0 ++ is1)
+      reg0 <- resultOfExpression e
+      varInit' reg0
 
 -- For now we will just assume that the expression is `42`.
-resultOfExpression :: MonadCompile m => Jlt.Expr -> m ([LLVM.Instruction], LLVM.Operand)
+resultOfExpression
+  :: MonadCompile m
+  => Jlt.Expr -> m LLVM.Operand
 resultOfExpression e = case e of
-  Jlt.ELitInt x -> return ([], Right (fromInteger x))
-  _ -> return ([], Right 42)
+  Jlt.ELitInt x -> return $ Right (fromInteger x)
+  _ -> return $ Right 42
 
 trIdent :: Jlt.Ident -> LLVM.Reg
 trIdent (Jlt.Ident s) = LLVM.Reg s
@@ -274,14 +288,18 @@ builtinDecls =
     }
   ]
 
-trExprTp :: MonadCompile m => Jlt.Type -> Jlt.Expr -> m [LLVM.Instruction]
+trExprTp
+  :: MonadCompile m
+  => Jlt.Type -> Jlt.Expr -> m ()
 trExprTp _tp e = case e of
   Jlt.EVar{} -> pse "var"
   Jlt.ELitInt{} -> pse "lit-int"
   Jlt.ELitDoub{} -> pse "lit-doub"
   Jlt.ELitTrue -> pse "true"
   Jlt.ELitFalse{} -> pse "false"
-  Jlt.EApp{} -> pse "app"
+  Jlt.EApp _i@(Jlt.Ident inm) es -> do
+    ops <- mapM resultOfExpression es
+    pse $ "call " ++ inm ++ intercalate "," (map prettyShow ops)
   Jlt.EString s -> pse ("str " ++ s)
   Jlt.Neg{} -> pse "neg"
   Jlt.Not{} -> pse "not"
@@ -292,9 +310,11 @@ trExprTp _tp e = case e of
   Jlt.EOr{} -> pse "or"
   Jlt.EAnn tp' e0 -> trExprTp tp' e0
   where
-    pse s = return [LLVM.Pseudo s]
+    pse s = emitInstructions [LLVM.Pseudo s]
 
-trExpr :: MonadCompile m => Jlt.Expr -> m [LLVM.Instruction]
+trExpr
+  :: MonadCompile m
+  => Jlt.Expr -> m ()
 trExpr e = case e of
   Jlt.EAnn tp e' -> trExprTp tp e'
   _              -> trExprTp err e
