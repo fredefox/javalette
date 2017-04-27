@@ -118,9 +118,9 @@ unreachable = LLVM.Pseudo "unreachable"
 type AlmostInstruction = Either LLVM.Label LLVM.Instruction
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
 almostToBlks [] = []
-almostToBlks (x : xs) = map atLeastOne . synth $ case x of
-  Left lbl -> foldl go (lbl               , [] , []) xs
-  Right i  -> foldl go (LLVM.Label "dummy", [i], []) xs
+almostToBlks (x : xs) = map (orderAllocsBlks . atLeastOne) . synth $ case x of
+  Left lbl -> foldl go (lbl             , [] , []) xs
+  Right i  -> foldl go (LLVM.Label "err", [i], []) xs
   where
     go
       :: (LLVM.Label, [LLVM.Instruction], [LLVM.Blk])
@@ -133,6 +133,14 @@ almostToBlks (x : xs) = map atLeastOne . synth $ case x of
     atLeastOne blk@(LLVM.Blk lbl is) = case is of
       [] -> LLVM.Blk lbl [unreachable]
       _  -> blk
+    orderAllocsBlks (LLVM.Blk lbl is) = (LLVM.Blk lbl (orderAllocs is))
+
+orderAllocs :: [LLVM.Instruction] -> [LLVM.Instruction]
+orderAllocs = uncurry (++) . foldl go ([],[])
+  where
+    go (allocs, nonallocs) i = case i of
+      LLVM.Alloca{} -> (allocs ++ [i], nonallocs)
+      _             -> (allocs, nonallocs ++ [i])
 
 -- "Type synonyms cannot be partially-applied"
 -- From: http://stackoverflow.com/a/9289928/1021134
