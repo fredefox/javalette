@@ -118,7 +118,7 @@ unreachable = LLVM.Pseudo "unreachable"
 type AlmostInstruction = Either LLVM.Label LLVM.Instruction
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
 almostToBlks [] = []
-almostToBlks (x : xs) = synth $ case x of
+almostToBlks (x : xs) = map atLeastOne . synth $ case x of
   Left lbl -> foldl go (lbl               , [] , []) xs
   Right i  -> foldl go (LLVM.Label "dummy", [i], []) xs
   where
@@ -130,6 +130,9 @@ almostToBlks (x : xs) = synth $ case x of
       Left lbl' -> (lbl', [], acc ++ [LLVM.Blk lbl prev])
       Right i   -> (lbl, prev ++ [i], acc)
     synth (lbl, is, acc) = acc ++ [LLVM.Blk lbl is]
+    atLeastOne blk@(LLVM.Blk lbl is) = case is of
+      [] -> LLVM.Blk lbl [unreachable]
+      _  -> blk
 
 -- "Type synonyms cannot be partially-applied"
 -- From: http://stackoverflow.com/a/9289928/1021134
@@ -146,7 +149,7 @@ trStmt fallThrough s = case s of
   Jlt.Incr i -> incr i >>= emitInstructions
   Jlt.Decr i -> decr i >>= emitInstructions
   Jlt.Ret e -> llvmReturn e
-  Jlt.VRet -> llvmVoidReturn >>= emitInstructions
+  Jlt.VRet -> llvmVoidReturn
   Jlt.Cond e s0 -> do
     t <- newLabel
     cond e t fallThrough
@@ -179,25 +182,38 @@ emitLabel = tell . pure . Left
 
 assign :: MonadCompile m
   => Jlt.Ident -> Jlt.Expr -> m ()
-assign (Jlt.Ident s) e = do
-  reg <- resultOfExpression e
-  emitInstructions [LLVM.Pseudo ("store " ++ prettyShow reg ++ " into " ++ s)]
+assign i e = do
+  op <- resultOfExpression e
+  let tp = trType (typeof e)
+      reg = trNameToReg i
+  emitInstructions [LLVM.Store tp op tp reg]
+
+-- TODO: Dummy value
+typeof :: Jlt.Expr -> Jlt.Type
+typeof (Jlt.EAnn tp _) = tp
+typeof _ = Jlt.Void
 
 llvmReturn
   :: MonadCompile m
   => Jlt.Expr -> m ()
 llvmReturn e = do
   op <- resultOfExpression e
-  emitInstructions [LLVM.Pseudo $ "return " ++ show op]
+  emitInstructions [LLVM.Return dummyTp op]
 
-llvmVoidReturn :: MonadCompile m => m [LLVM.Instruction]
-llvmVoidReturn = undefined
+showOp :: Show a => Either t a -> String
+showOp op = case op of
+  Right x -> show x
+  Left{} -> "?"
+
+-- TODO
+llvmVoidReturn :: MonadCompile m => m ()
+llvmVoidReturn = emitInstructions [LLVM.Pseudo "void return"]
 
 cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
 cond e (LLVM.Label t) (LLVM.Label f) = do
   op <- resultOfExpression e
-  emitInstructions [LLVM.Pseudo $ "if " ++ prettyShow op ++ " then " ++ t ++ " else " ++ f]
+  emitInstructions [LLVM.Pseudo $ "if " ++ showOp op ++ " then " ++ t ++ " else " ++ f]
 
 incr, decr :: MonadCompile m => Jlt.Ident -> m [LLVM.Instruction]
 incr i = do
@@ -228,7 +244,10 @@ varInit jltType itm = do
       varInit'
         :: MonadCompile m
         => LLVM.Operand -> m ()
-      varInit' op = emitInstructions $ pure $ LLVM.Store tp op (LLVM.Pointer tp) reg
+      varInit' op = emitInstructions
+        [ LLVM.Alloca tp reg
+        , LLVM.Store tp op (LLVM.Pointer tp) reg
+        ]
   case itm of
     Jlt.NoInit{} -> varInit' (defaultValue jltType)
     -- Here we must first compute the value of the expression
@@ -236,14 +255,6 @@ varInit jltType itm = do
     Jlt.Init _ e -> do
       reg0 <- resultOfExpression e
       varInit' reg0
-
--- For now we will just assume that the expression is `42`.
-resultOfExpression
-  :: MonadCompile m
-  => Jlt.Expr -> m LLVM.Operand
-resultOfExpression e = case e of
-  Jlt.ELitInt x -> return $ Right (fromInteger x)
-  _ -> return $ Right 42
 
 trIdent :: Jlt.Ident -> LLVM.Reg
 trIdent (Jlt.Ident s) = LLVM.Reg s
@@ -260,6 +271,9 @@ itemName itm = case itm of
 
 trName :: Jlt.Ident -> LLVM.Name
 trName (Jlt.Ident s) = LLVM.Name s
+
+trNameToReg :: Jlt.Ident -> LLVM.Reg
+trNameToReg (Jlt.Ident s) = LLVM.Reg s
 
 trArg :: Jlt.Arg -> LLVM.Type
 trArg (Jlt.Argument t _) = trType t
@@ -283,6 +297,21 @@ builtinDecls =
     }
   ]
 
+-- For now we will just assume that the expression is `42`.
+resultOfExpression
+  :: MonadCompile m
+  => Jlt.Expr -> m LLVM.Operand
+resultOfExpression e = case e of
+  Jlt.EVar{} -> todo
+  Jlt.ELitInt x -> return $ Right (fromInteger x)
+  Jlt.ELitDoub d -> return $ Right (round d)
+  Jlt.ELitTrue -> return $ Right 1
+  Jlt.ELitFalse -> return $ Right 0
+  Jlt.EAnn _ e' -> resultOfExpression e'
+  _ -> todo
+  where
+    todo = return $ Right 42
+
 trExprTp
   :: MonadCompile m
   => Jlt.Type -> Jlt.Expr -> m ()
@@ -294,7 +323,7 @@ trExprTp _tp e = case e of
   Jlt.ELitFalse{} -> pse "false"
   Jlt.EApp _i@(Jlt.Ident inm) es -> do
     ops <- mapM resultOfExpression es
-    pse $ "call " ++ inm ++ intercalate "," (map prettyShow ops)
+    pse $ "call " ++ inm ++ intercalate "," (map showOp ops)
   Jlt.EString s -> pse ("str " ++ s)
   Jlt.Neg{} -> pse "neg"
   Jlt.Not{} -> pse "not"
@@ -315,3 +344,6 @@ trExpr e = case e of
   _              -> trExprTp err e
   where
     err = error "IMPOSSIBLE - Should've been annotated by the type-checker"
+
+dummyTp :: LLVM.Type
+dummyTp = LLVM.I64

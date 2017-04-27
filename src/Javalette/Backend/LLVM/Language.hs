@@ -103,7 +103,7 @@ instance Pretty Label where
 
 data Instruction
   -- * Terminator instructions
-  = RET | BR
+  = Return Type Operand | BR
   -- * Arithmetic operations, integers
   | Add Type Operand Operand Reg
   | SUB | MUL | SDIV | SREM
@@ -146,5 +146,6 @@ instance Pretty Instruction where
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <+> char ',' <+> pPrint tpReg <+> pPrint reg
     Pseudo s -> char '{' <> text s <> char '}'
+    Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
     _ -> text "instruction"
 --  pPrintList lvl xs = undefined
