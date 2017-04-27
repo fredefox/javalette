@@ -115,7 +115,7 @@ data Instruction
   | GETELEMTPTR
   | Store Type Operand Type Reg
   -- * Misc.
-  | ICMP | FCMP | CALL
+  | ICMP | FCMP | CALL | Unreachable
   | Pseudo String
   deriving (Show)
 
@@ -145,7 +145,8 @@ instance Pretty Instruction where
     Store tpOp op tpReg reg
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <+> char ',' <+> pPrint tpReg <+> pPrint reg
-    Pseudo s -> char '{' <> text s <> char '}'
     Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
-    _ -> text "instruction"
+    Unreachable -> text "unreachable"
+    Pseudo s -> char '{' <> text s <> char '}'
+    _ -> text "{ugly instruction}"
 --  pPrintList lvl xs = undefined

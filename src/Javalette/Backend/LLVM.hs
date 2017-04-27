@@ -113,7 +113,7 @@ trBlk
 trBlk fallthrough (Jlt.Block stmts) = mapM_ (trStmt fallthrough) stmts
 
 unreachable :: LLVM.Instruction
-unreachable = LLVM.Pseudo "unreachable"
+unreachable = LLVM.Unreachable
 
 type AlmostInstruction = Either LLVM.Label LLVM.Instruction
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
