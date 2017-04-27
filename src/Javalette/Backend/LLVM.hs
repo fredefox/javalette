@@ -18,9 +18,6 @@ import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
 
-import Javalette.Syntax (sampleProg, smallProg)
-import Debug.Trace
-
 backend :: Backend
 backend = Backend
   { compiler = compile
@@ -38,58 +35,11 @@ compile fp = ioStuff . compileProg
 putStrLnStdErr :: String -> IO ()
 putStrLnStdErr = hPutStrLn stderr
 
--------------------
--- Closure stuff --
--------------------
-
-type Scope = [Map Jlt.Ident Jlt.Ident]
-
-emptyScope :: Scope
-emptyScope = []
-
--- | Assigns a name to `a` in the current closure and returns it. Do not call
--- `newVar` on a variable that has already been assigned or on a scope with no
--- closures.
-mapVar :: Jlt.Ident -> Jlt.Type -> Compiler Jlt.Ident
-mapVar a t = do
-  vars <- getVariables
-  (c:cs) <- case vars of
-    [] -> throwError (Generic "Cannot map variables with no closures at hand")
-    _ -> return vars
-  i <- fresh
-  let b = intToIdent i
-  putVariables (M.insert a b c : cs)
-  return b
-  where
-    intToIdent = Jlt.Ident . ('v':) . show
-
-fresh :: Compiler Int
-fresh = undefined
-
-putVariables :: Variables -> Compiler ()
-putVariables v = modify (\e -> e { variables = v })
-
-newVar :: LLVM.Type -> Compiler Jlt.Ident
-newVar t = do
-  vars <- getVariables
-  case vars of
-    [] -> error "Cannot create variables with no closures at hand"
-    (c:cs) -> undefined
-
-lookupFirst :: Ord a => a -> [Map a b] -> Maybe b
-lookupFirst _ [] = Nothing
-lookupFirst a (x : xs) = case M.lookup a x of
-  Nothing -> lookupFirst a xs
-  Just b  -> return b
-
-type Variables = Scope
-
 data CompilerErr = Generic String deriving (Show)
 data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.
-  { variables :: Variables
-  , maxLabel :: Int
+  { maxLabel :: Int
   } deriving (Show)
 
 --incrLabel :: Compiler Int
@@ -106,19 +56,8 @@ newLabel = LLVM.Label . ('l':) . show <$> incrLabel
 newLabelNamed :: MonadCompile m => String -> m LLVM.Label
 newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrLabel
 
-getVariables :: Compiler Variables
-getVariables = gets variables
-
-lookupIdent :: Jlt.Ident -> Compiler (Maybe Jlt.Ident)
-lookupIdent i = do
-  vars <- getVariables
-  return $ lookupFirst i vars
-
-intToName :: Int -> LLVM.Reg
-intToName = LLVM.Reg . ('v':) . show
-
 emptyEnv :: Env
-emptyEnv = Env emptyScope 0
+emptyEnv = Env 0
 
 instance Pretty CompilerErr where
   pPrint err = case err of
@@ -130,8 +69,6 @@ type MonadCompile m = (MonadState Env m, MonadError CompilerErr m)
 
 runCompiler :: Compiler a -> Either CompilerErr a
 runCompiler = runExcept . (`evalStateT` emptyEnv)
-
-runCompiler' = runExcept . (`runStateT` emptyEnv)
 
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
 compileProg = aux . rename
@@ -146,25 +83,6 @@ compileProg = aux . rename
           , LLVM.pDefs    = pDefs
           }
 
-{-
-controlBlk :: Jlt.Blk -> [[Jlt.Stmt]]
-controlBlk (Jlt.Block stmts) = foldl go [] stmts
-  where
-    go acc s = case s of
-      Jlt.Empty -> acc
-      Jlt.BStmt b -> acc ++ controlBlk b
-      Jlt.Decl{} -> acc ++ [s]
-      Jlt.Ass{} -> acc ++ [s]
-      Jlt.Incr{} -> acc ++ [s]
-      Jlt.Decr{} -> acc ++ [s]
-      Jlt.Ret{} -> acc ++ [s]
-      Jlt.VRet -> acc ++ [s]
-      Jlt.Cond e s0 -> undefined
-
-controlStmt :: Jlt.Stmt -> [Jlt.Stmt]
-controlStmt = undefined
--}
-
 -- | TODO Stub!
 collectGlobals :: Jlt.Prog -> [LLVM.GlobalVar]
 collectGlobals _ = []
@@ -175,7 +93,7 @@ trTopDef (Jlt.FnDef t i args blk) = do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
-    trBlkAlt fallThrough blk
+    trBlk fallThrough blk
     emitLabel fallThrough
   return LLVM.Def
     { LLVM.defType = trType t
@@ -184,35 +102,13 @@ trTopDef (Jlt.FnDef t i args blk) = do
     , LLVM.defBlks = bss
     }
 
-trBlk :: Jlt.Blk -> Compiler [LLVM.Blk]
-trBlk bs = do
-  lbl <- newLabel
-  trBlkWithLabel lbl [] bs
-
-trBlkAlt
+trBlk
   :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
   => LLVM.Label -> Jlt.Blk -> m ()
-trBlkAlt fallthrough (Jlt.Block stmts) = mapM_ (trStmtAlt fallthrough) stmts
+trBlk fallthrough (Jlt.Block stmts) = mapM_ (trStmt fallthrough) stmts
 
-trBlkWithLabel :: LLVM.Label -> [LLVM.Blk] -> Jlt.Blk -> Compiler [LLVM.Blk]
-trBlkWithLabel lbl prev (Jlt.Block stmts) = do
---   blks <- foldM (trStmt lbl) prev stmts
-  blks <- almostToBlks <$> execWriterT (mapM (trStmtAlt lbl) stmts)
-  b <- unreachable lbl
-  return (blks ++ [b])
-
-unreachable :: LLVM.Label -> Compiler LLVM.Blk
-unreachable lbl = return (LLVM.Blk lbl [instrUnreach])
-
-instrUnreach :: LLVM.Instruction
-instrUnreach = LLVM.Pseudo "unreachable"
-
-withNewLabel, labelWithReturn :: Compiler [LLVM.Instruction] -> Compiler LLVM.Blk
-withNewLabel act = LLVM.Blk <$> newLabel <*> act
-labelWithReturn = undefined
-
-tracePrettyId x = trace (prettyShow x) x
-tracePretty x = trace (prettyShow x)
+unreachable :: LLVM.Instruction
+unreachable = LLVM.Pseudo "unreachable"
 
 type AlmostInstruction = Either LLVM.Label LLVM.Instruction
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
@@ -234,13 +130,13 @@ almostToBlks (x : xs) = synth $ case x of
 -- From: http://stackoverflow.com/a/9289928/1021134
 -- But this is also the type:
 --     Jlt.Stmt -> WriterT AlmostInstruction Compiler ()
-trStmtAlt
+trStmt
   :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
   => LLVM.Label -> Jlt.Stmt -> m ()
-trStmtAlt fallThrough s = case s of
+trStmt fallThrough s = case s of
   Jlt.Empty -> return ()
-  Jlt.BStmt b -> trBlkAlt fallThrough b
-  Jlt.Decl typ its -> mapM_ (varInitAlt typ) its
+  Jlt.BStmt b -> trBlk fallThrough b
+  Jlt.Decl typ its -> mapM_ (varInit typ) its
   Jlt.Ass i e -> assign i e >>= emitInstructions
   Jlt.Incr i -> incr i >>= emitInstructions
   Jlt.Decr i -> decr i >>= emitInstructions
@@ -264,82 +160,17 @@ trStmtAlt fallThrough s = case s of
     lblBody <- newLabelNamed "whileBody"
     emitLabel lblCond
     condAlt e lblBody fallThrough
-    traceShow s0 `seq` emitLabel lblBody
-    traceShow s0 `seq` cont (traceShowId lblBody `seq` s0)
+    emitLabel lblBody
+    cont s0
   Jlt.SExp e -> trExpr e >>= emitInstructions
   where
-    cont = trStmtAlt fallThrough
+    cont = trStmt fallThrough
 
 emitInstructions :: MonadWriter [Either a s]  m => [s] -> m ()
 emitInstructions = tell . map Right
 
 emitLabel :: MonadWriter [Either a s] m => a -> m ()
 emitLabel = tell . pure . Left
-
-trStmt :: LLVM.Label -> [LLVM.Blk] -> Jlt.Stmt -> Compiler [LLVM.Blk]
-trStmt fallThrough (tp "prev" -> prev) (traceShowId -> s) = case s of
-  Jlt.Empty -> returnPrev
-  Jlt.BStmt b -> newLabel >>= \l -> trBlkWithLabel l prev b >>= mergeWithPrev
-  -- We should have already taken care of allocating all variables (and
-  -- therefore also created a mapping for them)
-  Jlt.Decl typ its -> (concat <$> mapM (varInit typ) its) >>= addToPrev
-  Jlt.Ass i e -> assign i e >>= addToPrev
-  Jlt.Incr i -> incr i >>= addToPrev
-  Jlt.Decr i -> decr i >>= addToPrev
-  Jlt.Ret e -> llvmReturn e >>= addToPrev
-  Jlt.VRet -> llvmVoidReturn >>= addToPrev
-  Jlt.Cond e s0 -> do
-    t <- newLabel
-    is <- cond e t fallThrough
-    bs0 <- addToPrev is
-    trStmt fallThrough (prev ++ [LLVM.Blk t []]) s0
-  Jlt.CondElse e s0 s1 -> do
-    t <- newLabel
-    f <- newLabel
-    is <- cond e t f
-    bs0 <- addToPrev is
-    bs1 <- trStmt fallThrough (bs0++ [LLVM.Blk t []]) s0
-    trStmt fallThrough (bs1  ++ [LLVM.Blk f []]) s1
-  Jlt.While e s0 -> do
-    lblCond <- newLabelNamed "whileCond"
-    lblBody <- newLabelNamed "whileBody"
-    is <- cond e lblBody fallThrough
-    let blkCond = LLVM.Blk lblCond is
-    blksBody <- trStmt lblCond (prev ++ [LLVM.Blk lblBody []]) s0
-    appendToPrev (blkCond : blksBody)
-  Jlt.SExp e -> trExpr e >>= addToPrev
-  where
-    addToPrev :: [LLVM.Instruction] -> Compiler [LLVM.Blk]
-    addToPrev is = case splitLast prev of
-      Nothing -> do
-        lbl <- newLabel
-        return [LLVM.Blk lbl is]
-      Just (xs, LLVM.Blk lbl is0) -> return (xs ++ [LLVM.Blk lbl (is0 ++ is)])
-    mergeWithPrev :: [LLVM.Blk] -> Compiler [LLVM.Blk]
-    mergeWithPrev (tp "merge" -> blks) = case splitLast prev of
-      Nothing -> return blks
-      Just (blks', LLVM.Blk lbl is) -> case blks of
-        [] -> return prev
-        (LLVM.Blk _lbl' is' : xs) -> return (blks' ++ [LLVM.Blk lbl (is ++ is')] ++ xs)
-    appendToPrev :: [LLVM.Blk] -> Compiler [LLVM.Blk]
-    appendToPrev bs = case splitLast prev of
-      Nothing -> return bs
-      Just (xs, LLVM.Blk lbl is) -> case bs of
-        [] -> return prev
-        ys@(LLVM.Blk (LLVM.Label lblNext) _:_) -> return
-          $ xs ++ [LLVM.Blk lbl (is ++ [LLVM.Pseudo ("jmp " ++ lblNext)])] ++ ys
-    returnPrev :: Compiler [LLVM.Blk]
-    returnPrev = return prev
-
-tp ss x = trace (ss ++ ":\n" ++ prettyShow x) x
-
--- Warning, inefficient.
-splitLast :: [a] -> Maybe ([a], a)
-splitLast [] = Nothing
-splitLast [x] = Just ([], x)
-splitLast (x : xs) = do
-  (xs', x') <- splitLast xs
-  return (x : xs', x')
 
 assign :: MonadCompile m => Jlt.Ident -> Jlt.Expr -> m [LLVM.Instruction]
 assign (Jlt.Ident s) e = do
@@ -362,13 +193,6 @@ cond e (LLVM.Label t) (LLVM.Label f) = do
   (is, op) <- resultOfExpression e
   return $ is ++ [LLVM.Pseudo $ "if " ++ prettyShow op ++ " then " ++ t ++ " else " ++ f]
 
-maybeToErr :: MonadError e m => e -> Maybe a -> m a
-maybeToErr err Nothing  = throwError err
-maybeToErr _   (Just x) = return x
-
-maybeToErr' :: CompilerErr -> Maybe a -> Compiler a
-maybeToErr' = maybeToErr
-
 incr, decr :: MonadCompile m => Jlt.Ident -> m [LLVM.Instruction]
 incr i = do
   let tp = LLVM.I32
@@ -385,56 +209,11 @@ decr = undefined
 newReg :: MonadCompile m => m LLVM.Reg
 newReg = return (LLVM.Reg "stub")
 
-pushScope, popScope :: Compiler ()
-pushScope = modify (\e -> e { variables = push . variables $ e })
-  where
-    push :: Variables -> Variables
-    push = ((:) mempty)
-
-popScope = modify (\e -> e { variables = pop . variables $ e })
-  where
-    pop :: Variables -> Variables
-    pop [] = error "Cannot pop on empty environment"
-    pop (_:xs) = xs
-
-withNewScope :: Compiler a -> Compiler a
-withNewScope act = do
-  pushScope
-  a <- act
-  popScope
-  return a
-
-varsBlk :: Jlt.Blk -> Compiler [LLVM.Instruction]
-varsBlk (Jlt.Block stmts) = withNewScope (concat <$> mapM varsStmt stmts)
-
-varsStmt :: Jlt.Stmt -> Compiler [LLVM.Instruction]
-varsStmt s = case s of
-  Jlt.Empty -> return []
-  Jlt.BStmt b -> varsBlk b
-  Jlt.Decl t its -> mapM (varDecl t) its
-  Jlt.Ass{} -> return []
-  Jlt.Incr{} -> return []
-  Jlt.Decr{} -> return []
-  Jlt.Ret{} -> return []
-  Jlt.VRet -> return []
-  Jlt.Cond _ s0 -> varsStmt s0
-  Jlt.CondElse _ s0 s1 -> liftM2 (++) (varsStmt s0) (varsStmt s1)
-  Jlt.While _ s0 -> varsStmt s0
-  Jlt.SExp{} -> return []
-
-varDecl :: Jlt.Type -> Jlt.Item -> Compiler LLVM.Instruction
-varDecl t itm = do
-  (reg, tp) <- undefined -- assignNameItem itm t
-  return (LLVM.Alloca tp reg)
-
-varInitAlt
-  :: (MonadCompile m, MonadWriter [AlmostInstruction] m)
-  => Jlt.Type -> Jlt.Item -> m ()
-varInitAlt typ itm = varInit typ itm >>= tell . map Right
-
 -- | Assumes that the item is already initialized and exists in scope.
-varInit :: MonadCompile m => Jlt.Type -> Jlt.Item -> m [LLVM.Instruction]
-varInit jltType itm = do
+varInit
+  :: (MonadWriter [AlmostInstruction] m, MonadCompile m)
+  => Jlt.Type -> Jlt.Item -> m ()
+varInit jltType itm = (>>= emitInstructions) $ do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
       tp = trType jltType
@@ -464,13 +243,6 @@ defaultValue :: Jlt.Type -> LLVM.Operand
 defaultValue t = case t of
   Jlt.Int -> Right 0
   _   -> Right 0
-
-assignNameItem :: Jlt.Item -> Jlt.Type -> Compiler Jlt.Ident
-assignNameItem itm t = mapVar (itemName itm) t
-
-
-lookupItem :: Jlt.Item -> Compiler (Maybe Jlt.Ident)
-lookupItem itm = lookupIdent (itemName itm)
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
@@ -502,8 +274,8 @@ builtinDecls =
     }
   ]
 
-trExpr :: MonadCompile m => Jlt.Expr -> m [LLVM.Instruction]
-trExpr e = case e of
+trExprTp :: MonadCompile m => Jlt.Type -> Jlt.Expr -> m [LLVM.Instruction]
+trExprTp _tp e = case e of
   Jlt.EVar{} -> pse "var"
   Jlt.ELitInt{} -> pse "lit-int"
   Jlt.ELitDoub{} -> pse "lit-doub"
@@ -518,17 +290,13 @@ trExpr e = case e of
   Jlt.ERel{} -> pse "rel"
   Jlt.EAnd{} -> pse "and"
   Jlt.EOr{} -> pse "or"
-  Jlt.EAnn _ e0 -> trExpr e0
+  Jlt.EAnn tp' e0 -> trExprTp tp' e0
   where
     pse s = return [LLVM.Pseudo s]
 
-renamedProg = rename sampleProg
-
--- (Jlt.Program [mainFun]) = rename smallProg
-(Jlt.Program (mainFun:_)) = renamedProg
-
-(Jlt.FnDef _ _ _ (Jlt.Block mainStmts)) = mainFun
-
-t = prettyPrint is
+trExpr :: MonadCompile m => Jlt.Expr -> m [LLVM.Instruction]
+trExpr e = case e of
+  Jlt.EAnn tp e' -> trExprTp tp e'
+  _              -> trExprTp err e
   where
-    Right is = trTopDef mainFun
+    err = error "IMPOSSIBLE - Should've been annotated by the type-checker"
