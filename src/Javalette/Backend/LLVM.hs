@@ -64,7 +64,7 @@ instance Pretty CompilerErr where
   pPrint err = case err of
     Generic s -> text "ERR:" <+> text s
 
-type Compiler a = StateT Env (Except CompilerErr) a
+type Compiler a = WriterT [AlmostInstruction] (StateT Env (Except CompilerErr)) a
 
 type MonadCompile m =
   ( MonadWriter [AlmostInstruction] m
@@ -72,8 +72,8 @@ type MonadCompile m =
   , MonadError CompilerErr m
   )
 
-runCompiler :: Compiler a -> Either CompilerErr a
-runCompiler = runExcept . (`evalStateT` emptyEnv)
+runCompiler :: Compiler a -> Either CompilerErr [AlmostInstruction]
+runCompiler = runExcept . (`evalStateT` emptyEnv) . execWriterT
 
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
 compileProg = aux . rename
@@ -94,7 +94,7 @@ collectGlobals _ = []
 
 trTopDef :: Jlt.TopDef -> Either CompilerErr LLVM.Def
 trTopDef (Jlt.FnDef t i args blk) = do
-  bss <- fmap almostToBlks $ runCompiler $ execWriterT $ do
+  bss <- fmap almostToBlks $ runCompiler $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
