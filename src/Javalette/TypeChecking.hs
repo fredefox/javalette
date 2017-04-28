@@ -217,9 +217,10 @@ typecheckStmt :: Type -> Stmt -> TypeChecker Stmt
 typecheckStmt t s = case s of
   Empty          -> return Empty
   BStmt blk      -> BStmt <$> (newScope >> typecheckBlk t blk)
-  Decl t0 its    -> return s <* do
-    mapM_ (typecheckItem t0) its
+  Decl t0 its    -> do
+    its' <- mapM (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
+    return (Decl t0 its')
   Ass i e        -> do
     ti <- lookupTypeVar i
     (e', te) <- infer e
@@ -329,13 +330,14 @@ isInteger t = case t of
   { Int -> True ; _ -> False }
 
 -- | Almost the `TypeCheck` instance for a `Item`.
-typecheckItem :: Type -> Item -> TypeChecker ()
+typecheckItem :: Type -> Item -> TypeChecker Item
 typecheckItem t i = case i of
-  NoInit{} -> return ()
-  Init _ e -> do
-    (_, t') <- infer e
+  NoInit{} -> return i
+  Init idnt e -> do
+    (e', t') <- infer e
     unless (t == t')
       $ throwError TypeMismatch
+    return (Init idnt e')
 
 instance TypeCheck Expr where
 instance Infer Expr where

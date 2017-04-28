@@ -299,19 +299,25 @@ builtinDecls =
   ]
 
 -- For now we will just assume that the expression is `42`.
-resultOfExpression
+resultOfExpressionTp
   :: MonadCompile m
-  => Jlt.Expr -> m LLVM.Operand
-resultOfExpression e = case e of
+  => Jlt.Type -> Jlt.Expr -> m LLVM.Operand
+resultOfExpressionTp tp e = case e of
   Jlt.EVar{} -> todo
   Jlt.ELitInt x -> return $ Right (fromInteger x)
   Jlt.ELitDoub d -> return $ Right (round d)
   Jlt.ELitTrue -> return $ Right 1
   Jlt.ELitFalse -> return $ Right 0
-  Jlt.EAnn _ e' -> resultOfExpression e'
+  Jlt.EAnn tp' e' -> resultOfExpressionTp tp' e'
   _ -> todo
   where
     todo = return $ Right 42
+
+resultOfExpression :: MonadCompile m
+  => Jlt.Expr -> m LLVM.Operand
+resultOfExpression e = case e of
+  Jlt.EAnn tp e' -> resultOfExpressionTp tp e'
+  _         -> error "IMPOSSIBLE - was removed during type-checking"
 
 trExprTp
   :: MonadCompile m
@@ -323,7 +329,7 @@ trExprTp tp e = case e of
   Jlt.ELitTrue -> pse "true"
   Jlt.ELitFalse{} -> pse "false"
   Jlt.EApp i es -> do
-    ops <- mapM resultOfExpression es
+    ops <- mapM (resultOfExpressionTp tp) es
     call (trType tp) (trName i) ops
   Jlt.EString s -> pse ("str " ++ s)
   Jlt.Neg{} -> pse "neg"
@@ -333,6 +339,7 @@ trExprTp tp e = case e of
   Jlt.ERel{} -> pse "rel"
   Jlt.EAnd{} -> pse "and"
   Jlt.EOr{} -> pse "or"
+  -- This ought not to occur:
   Jlt.EAnn tp' e0 -> trExprTp tp' e0
   where
     pse s = emitInstructions [LLVM.Pseudo s]
@@ -353,7 +360,7 @@ trExpr
   => Jlt.Expr -> m ()
 trExpr e = case e of
   Jlt.EAnn tp e' -> trExprTp tp e'
-  _              -> trExprTp err e
+  _              -> err
   where
     err = error "IMPOSSIBLE - Should've been annotated by the type-checker"
 
