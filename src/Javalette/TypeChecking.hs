@@ -21,7 +21,8 @@ import Javalette.Syntax
 import qualified Javalette.Syntax as AST
 import Javalette.PrettyPrint
 
--- | Performs typechecking of a progrma
+-- | Performs typechecking of a program. Return a desugarred and annotated
+-- version of the AST.
 typecheck :: Prog -> Either TypeCheckingError Prog
 typecheck p = evalTypeChecker $ do
   pAnn <- typechk p
@@ -225,14 +226,16 @@ typecheckStmt t s = case s of
     unless (ti == te)
       $ throwError TypeMismatch
     return (Ass i e')
-  Incr i         -> return s <* do
+  Incr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-  Decr i         -> return s <* do
+    typecheckStmt t (Ass i (EAdd (EVar i) Plus  (one t')))
+  Decr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
+    typecheckStmt t (Ass i (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -254,6 +257,13 @@ typecheckStmt t s = case s of
     s0' <- typecheckStmt t s0
     return (While e' s0')
   SExp e -> SExp <$> typechk e
+
+one :: Type -> Expr
+one t = case t of
+  Int -> ELitInt 1 ; Doub -> ELitDoub 1
+  Bool -> err ; Void -> err ; String -> err ; Fun{} -> err
+  where
+    err = error "non-numeric value"
 
 -- | Helper function that checks that an expression has a boolean type.
 inferBoolean :: Expr -> TypeChecker Expr
