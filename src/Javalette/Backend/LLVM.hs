@@ -219,9 +219,9 @@ llvmVoidReturn = emitInstructions [LLVM.Pseudo "void return"]
 
 cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
-cond e (LLVM.Label t) (LLVM.Label f) = do
+cond e t f = do
   op <- resultOfExpression e
-  emitInstructions [LLVM.Pseudo $ "if " ++ showOp op ++ " then " ++ t ++ " else " ++ f]
+  emitInstructions [LLVM.BranchCond op t f]
 
 incr, decr :: MonadCompile m => Jlt.Ident -> m [LLVM.Instruction]
 incr i = do
@@ -232,7 +232,7 @@ incr i = do
   return
     [ LLVM.Load tp (LLVM.Pointer tp) xptr xval
     , LLVM.Add tp (Left xval) (Right 1) valIncr
-    , LLVM.Store (LLVM.I64) (Left valIncr) LLVM.I64 xptr
+    , LLVM.Store LLVM.I64 (Left valIncr) LLVM.I64 xptr
     ]
 decr = undefined
 

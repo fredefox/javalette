@@ -72,7 +72,8 @@ data Decl = Decl
   } deriving (Show)
 
 instance Pretty Decl where
-  pPrint (Decl tp nm args) = text "declare" <+> pPrint tp <+> pPrint nm <> parens (hsep (map pPrint args))
+  pPrint (Decl tp nm args) = text "declare" <+> pPrint tp <+> pPrint nm
+    <> parens (hsepBy (char ',') (map pPrint args))
   pPrintList _lvl xs = vcat (map pPrint xs)
 
 data Def = Def
@@ -82,11 +83,17 @@ data Def = Def
   , defBlks :: [Blk]
   } deriving (Show)
 
+hsepBy :: Doc -> [Doc] -> Doc
+hsepBy _ [] = mempty
+hsepBy _ [x] = x
+hsepBy d (x:xs) = x <> d <+> hsepBy d xs
+
 instance Pretty Def where
   pPrint (Def tp nm args blks)
     = text "define"
     <+> pPrint tp
-    <+> pPrint nm <> parens (hsep (map pPrint args)) <+> lbrace
+    <+> pPrint nm <> parens (hsepBy (char ',') (map pPrint args))
+    <+> lbrace
     $$ vcat (map pPrint blks)
     $$ rbrace
   pPrintList _lvl xs = vcat (map pPrint xs)
@@ -94,16 +101,18 @@ instance Pretty Def where
 data Blk = Blk Label [Instruction] deriving (Show)
 
 instance Pretty Blk where
-  pPrint (Blk lbl is) = pPrint lbl <+> vcat (map pPrint is)
+  pPrint (Blk lbl is) = pPrint lbl <> char ':' <+> vcat (map pPrint is)
 
 data Label = Label String deriving (Show)
 
 instance Pretty Label where
-  pPrint (Label s) = text (s ++ ":")
+  pPrint (Label s) = text s
 
 data Instruction
   -- * Terminator instructions
-  = Return Type Operand | BR
+  = Return Type Operand
+  | Branch Label
+  | BranchCond Operand Label Label
   -- * Arithmetic operations, integers
   | Add Type Operand Operand Reg
   | SUB | MUL | SDIV | SREM
@@ -133,6 +142,11 @@ instance Pretty Reg where
 
 instance Pretty Instruction where
   pPrint i = case i of
+    Branch lbl -> text "br label" <+> pPrint lbl
+    BranchCond cond t f
+      -> text "br i1" <+> pPrintOp cond <> char ','
+      <+> text "label" <+> char '%' <> pPrint t <> char ','
+      <+> text "label" <+> char '%' <> pPrint f
     Alloca tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
     Add ty op0 op1 reg
       -> pPrint reg <+> char '='
