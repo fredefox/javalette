@@ -94,7 +94,7 @@ EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
 
 EOr.       Expr ::= Expr1 "||" Expr ;
 
-internal EAnn. Expr ::= "{-" Type Expr "-}" ;
+internal EAnn. Expr ::= "{-" Type "-}" Expr ;
 
 coercions  Expr 6 ;
 
