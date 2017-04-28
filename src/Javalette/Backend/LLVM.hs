@@ -356,7 +356,7 @@ call t n ops = do
   r <- newReg
   opTypes <- getArgTypesOf n
   emitInstructions
-    [ LLVM.Call (LLVM.Void) n (zip opTypes ops) r ]
+    [ LLVM.Call t n (zip opTypes ops) r ]
   where
     getArgTypesOf :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
     getArgTypesOf _ = return $ repeat LLVM.Void
