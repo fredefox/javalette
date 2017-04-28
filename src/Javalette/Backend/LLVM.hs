@@ -163,8 +163,8 @@ trStmt fallThrough s = case s of
   Jlt.BStmt b -> trBlk fallThrough b
   Jlt.Decl typ its -> mapM_ (varInit typ) its
   Jlt.Ass i e -> assign i e
-  Jlt.Incr i -> incr i >>= emitInstructions
-  Jlt.Decr i -> decr i >>= emitInstructions
+  Jlt.Incr{} -> undefined "IMPOSSIBLE - removed by typechecker"
+  Jlt.Decr{} -> undefined "IMPOSSIBLE - removed by typechecker"
   Jlt.Ret e -> llvmReturn e
   Jlt.VRet -> llvmVoidReturn
   Jlt.Cond e s0 -> do
@@ -231,19 +231,6 @@ cond :: MonadCompile m
 cond e t f = do
   op <- resultOfExpression e
   emitInstructions [LLVM.BranchCond op t f]
-
-incr, decr :: MonadCompile m => Jlt.Ident -> m [LLVM.Instruction]
-incr i = do
-  let tp = LLVM.I32
-      xptr = trIdent i
-  xval <- newReg
-  valIncr <- newReg
-  return
-    [ LLVM.Load tp (LLVM.Pointer tp) xptr xval
-    , LLVM.Add tp (Left xval) (Right 1) valIncr
-    , LLVM.Store LLVM.I64 (Left valIncr) LLVM.I64 xptr
-    ]
-decr = undefined
 
 -- | Assumes that the item is already initialized and exists in scope.
 varInit
