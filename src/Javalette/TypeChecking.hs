@@ -215,7 +215,7 @@ typecheckBlk t (Block stms) = Block <$> mapM (typecheckStmt t) stms
 typecheckStmt :: Type -> Stmt -> TypeChecker Stmt
 typecheckStmt t s = case s of
   Empty          -> return Empty
-  BStmt blk      -> return s <* (newScope >> typecheckBlk t blk)
+  BStmt blk      -> BStmt <$> (newScope >> typecheckBlk t blk)
   Decl t0 its    -> return s <* do
     mapM_ (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
