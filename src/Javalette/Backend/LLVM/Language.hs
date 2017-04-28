@@ -124,7 +124,9 @@ data Instruction
   | GETELEMTPTR
   | Store Type Operand Type Reg
   -- * Misc.
-  | ICMP | FCMP | CALL | Unreachable
+  | ICMP | FCMP
+  | Call Type Name [(Type, Operand)] Reg
+  | Unreachable
   | Pseudo String
   deriving (Show)
 
@@ -158,9 +160,15 @@ instance Pretty Instruction where
       <+> pPrint regSrc
     Store tpOp op tpReg reg
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
-      <+> char ',' <+> pPrint tpReg <+> pPrint reg
+      <> char ',' <+> pPrint tpReg <+> pPrint reg
     Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
     Unreachable -> text "unreachable"
     Pseudo s -> char '{' <> text s <> char '}'
+    Call t n args r
+      -> pPrint r <+> char '='
+      <+> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)
     _ -> text "{ugly instruction}"
 --  pPrintList lvl xs = undefined
+
+pPrintTypeOp :: [(Type, Operand)] -> Doc
+pPrintTypeOp = hsepBy (char ',') . map (\(t, o) -> pPrint t <+> pPrintOp o)

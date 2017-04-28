@@ -40,25 +40,34 @@ data CompilerErr = Generic String deriving (Show)
 data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.
-  { maxLabel :: Int
+  { counterLabels :: Int
+  , counterRegs   :: Int
   } deriving (Show)
 
---incrLabel :: Compiler Int
---incrLabel :: StateT Env (Except CompilerErr) Int
-incrLabel :: MonadState Env m => m Int
-incrLabel = do
-  lbl <- maxLabel <$> get
-  modify (\e -> e { maxLabel = succ lbl })
+incrCounterLabels :: MonadState Env m => m Int
+incrCounterLabels = do
+  lbl <- gets counterLabels
+  modify (\e -> e { counterLabels = succ lbl })
+  return lbl
+
+incrCounterRegs :: MonadState Env m => m Int
+incrCounterRegs = do
+  lbl <- gets counterRegs
+  modify (\e -> e { counterRegs = succ lbl })
   return lbl
 
 newLabel :: MonadState Env m => m LLVM.Label
-newLabel = LLVM.Label . ('l':) . show <$> incrLabel
+newLabel = LLVM.Label . ('l':) . show <$> incrCounterLabels
 
 newLabelNamed :: MonadCompile m => String -> m LLVM.Label
-newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrLabel
+--newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
+newLabelNamed _ = newLabel
+
+newReg :: MonadCompile m => m LLVM.Reg
+newReg = LLVM.Reg . ('t':) . show <$> incrCounterRegs
 
 emptyEnv :: Env
-emptyEnv = Env 0
+emptyEnv = Env 0 0
 
 instance Pretty CompilerErr where
   pPrint err = case err of
@@ -236,9 +245,6 @@ incr i = do
     ]
 decr = undefined
 
-newReg :: MonadCompile m => m LLVM.Reg
-newReg = return (LLVM.Reg "stub")
-
 -- | Assumes that the item is already initialized and exists in scope.
 varInit
   :: MonadCompile m
@@ -323,15 +329,15 @@ resultOfExpression e = case e of
 trExprTp
   :: MonadCompile m
   => Jlt.Type -> Jlt.Expr -> m ()
-trExprTp _tp e = case e of
+trExprTp tp e = case e of
   Jlt.EVar{} -> pse "var"
   Jlt.ELitInt{} -> pse "lit-int"
   Jlt.ELitDoub{} -> pse "lit-doub"
   Jlt.ELitTrue -> pse "true"
   Jlt.ELitFalse{} -> pse "false"
-  Jlt.EApp _i@(Jlt.Ident inm) es -> do
+  Jlt.EApp i es -> do
     ops <- mapM resultOfExpression es
-    pse $ "call " ++ inm ++ intercalate "," (map showOp ops)
+    call (trType tp) (trName i) ops
   Jlt.EString s -> pse ("str " ++ s)
   Jlt.Neg{} -> pse "neg"
   Jlt.Not{} -> pse "not"
@@ -343,6 +349,17 @@ trExprTp _tp e = case e of
   Jlt.EAnn tp' e0 -> trExprTp tp' e0
   where
     pse s = emitInstructions [LLVM.Pseudo s]
+
+-- Call Type Name [(Type, Operand)] Reg
+call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
+call t n ops = do
+  r <- newReg
+  opTypes <- getArgTypesOf n
+  emitInstructions
+    [ LLVM.Call (LLVM.Void) n (zip opTypes ops) r ]
+  where
+    getArgTypesOf :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
+    getArgTypesOf _ = return $ repeat LLVM.Void
 
 trExpr
   :: MonadCompile m
