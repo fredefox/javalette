@@ -333,7 +333,7 @@ runx86 abi libPath oFile src inp outp = do
   setCurrentDirectory dir
   withIntermediateFile oFile src $ do
     killFile "a.out"
-    system $ unwords ["gcc", unwords gccopts, oFile, libPath ++"/runtime.o"]
+    system $ unwords ["clang", unwords gccopts, oFile, libPath ++"/runtime.o"]
     result <- runProg "./a.out" src inp outp
     setCurrentDirectory d0
     return result
