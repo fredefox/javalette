@@ -290,7 +290,7 @@ assign i e = do
   op <- resultOfExpression e
   let tp = trType (typeof e)
       reg = trNameToReg i
-  emitInstructions [LLVM.Store tp op tp reg]
+  emitInstructions [LLVM.Store tp op (LLVM.Pointer tp) reg]
 
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
@@ -301,7 +301,8 @@ llvmReturn
   => Jlt.Expr -> m ()
 llvmReturn e = do
   op <- resultOfExpression e
-  emitTerminator (LLVM.Return dummyTp op)
+  let tp = trType (typeof e)
+  emitTerminator (LLVM.Return tp op)
 
 showOp :: Show a => Either t a -> String
 showOp op = case op of
@@ -420,7 +421,8 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [LLVM.Icmp (relOp op) (trType tp) r0 r1 r]
+    let tp' = trType $ typeof e0
+    emitInstructions [LLVM.Icmp (relOp op) tp' r0 r1 r]
     return (Left r)
   Jlt.EMul e0 op e1 -> do
     r0 <- resultOfExpression e0
