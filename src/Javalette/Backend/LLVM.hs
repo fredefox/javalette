@@ -205,10 +205,9 @@ assign i e = do
       reg = trNameToReg i
   emitInstructions [LLVM.Store tp op tp reg]
 
--- TODO: Dummy value
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
-typeof _ = Jlt.Void
+typeof _ = error "IMPOSSIBLE - should've been removed by the typechecker"
 
 llvmReturn
   :: MonadCompile m
@@ -321,7 +320,30 @@ resultOfExpressionTp tp e = case e of
     r <- newReg
     emitInstructions [LLVM.Pseudo $ "rel " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
     return (Left r)
+  Jlt.EMul e0 op e1 -> do
+    r0 <- resultOfExpression e0
+    r1 <- resultOfExpression e1
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "mul " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
+    return (Left r)
+  Jlt.EAdd e0 op e1 -> do
+    r0 <- resultOfExpression e0
+    r1 <- resultOfExpression e1
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "add " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
+    return (Left r)
+  Jlt.EString s -> do
+    r <- lookupString s
+    emitInstructions [LLVM.Pseudo "string"]
+    return (Left r)
   _ -> error $ "Not handling " ++ show e
+
+-- TODO We should traverse the ast, collect all strings, put them in a map
+-- and then declare them at the top of the llvm output. We should then lookup
+-- the name of that declaration and use the pointer to that value whenever a
+-- given string is needed.
+lookupString :: MonadCompile m => String -> m LLVM.Reg
+lookupString _ = newReg
 
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand
