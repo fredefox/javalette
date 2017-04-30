@@ -11,6 +11,7 @@ module Javalette.Backend.LLVM.Language
   , Def(..)
   , Blk(..)
   , Label(..)
+  , TermInstr(..)
   , Instruction(..)
   , Comparison(..)
   , Reg(..)
@@ -103,24 +104,28 @@ instance Pretty Def where
     $$ rbrace
   pPrintList _lvl xs = vcat (map pPrint xs)
 
-data Blk = Blk Label [Instruction] deriving (Show)
+data Blk = Blk Label [Instruction] TermInstr deriving (Show)
 
 instance Pretty Blk where
-  pPrint (Blk lbl is) = pPrint lbl <> char ':' <+> vcat (map pPrint is)
+  pPrint (Blk lbl is ti) = pPrint lbl <> char ':' <+> vcat (map pPrint is ++ [pPrint ti])
 
 data Label = Label String deriving (Show)
 
 instance Pretty Label where
   pPrint (Label s) = text s
 
-data Instruction
+data TermInstr
   -- * Terminator instructions
   = Return Type Operand
   | VoidReturn
   | Branch Label
   | BranchCond Operand Label Label
+  | Unreachable
+  deriving (Show)
+
+data Instruction
   -- * Arithmetic operations, integers
-  | Add Type Operand Operand Reg
+  = Add Type Operand Operand Reg
   | Sub Type Operand Operand Reg
   | Mul Type Operand Operand Reg
   | Div Type Operand Operand Reg
@@ -143,7 +148,6 @@ data Instruction
   | FCMP
   | Call Type Name [(Type, Operand)] Reg
   | CallVoid Type Name [(Type, Operand)]
-  | Unreachable
   | Pseudo String
   deriving (Show)
 
@@ -183,11 +187,6 @@ instance Pretty Reg where
 
 instance Pretty Instruction where
   pPrint i = case i of
-    Branch lbl -> text "br label" <+> pPrint lbl
-    BranchCond cond t f
-      -> text "br i1" <+> pPrintOp cond <> char ','
-      <+> text "label" <+> char '%' <> pPrint t <> char ','
-      <+> text "label" <+> char '%' <> pPrint f
     Alloca tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
     Load ty0 ty1 regSrc regTrg
       -> pPrint regTrg <+> char '='
@@ -196,9 +195,6 @@ instance Pretty Instruction where
     Store tpOp op tpReg reg
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <> char ',' <+> pPrint tpReg <+> pPrint reg
-    Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
-    VoidReturn -> text "ret void"
-    Unreachable -> text "unreachable"
     Pseudo s -> char '{' <> text s <> char '}'
     Call t n args r
       -> pPrint r <+> char '='
@@ -218,6 +214,17 @@ instance Pretty Instruction where
     Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
     Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
     _ -> text "{ugly instruction}"
+
+instance Pretty TermInstr where
+  pPrint i = case i of
+    Branch lbl -> text "br label" <+> pPrint lbl
+    BranchCond cond t f
+      -> text "br i1" <+> pPrintOp cond <> char ','
+      <+> text "label" <+> char '%' <> pPrint t <> char ','
+      <+> text "label" <+> char '%' <> pPrint f
+    Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
+    VoidReturn -> text "ret void"
+    Unreachable -> text "unreachable"
 
 prettyBinInstr
   :: Doc -> Type -> Operand -> Operand -> Reg -> Doc

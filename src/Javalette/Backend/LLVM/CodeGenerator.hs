@@ -195,28 +195,33 @@ trBlk
   => LLVM.Label -> Jlt.Blk -> m ()
 trBlk fallthrough (Jlt.Block stmts) = mapM_ (trStmt fallthrough) stmts
 
-unreachable :: LLVM.Instruction
+unreachable :: LLVM.TermInstr
 unreachable = LLVM.Unreachable
 
-type AlmostInstruction = Either LLVM.Label LLVM.Instruction
+data AlmostInstruction
+  = Label LLVM.Label
+  | Instr LLVM.Instruction
+  | TermInstr LLVM.TermInstr
+  deriving (Show)
+
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
 almostToBlks [] = []
-almostToBlks (x : xs) = map (orderAllocsBlks . atLeastOne) . synth $ case x of
-  Left lbl -> foldl go (lbl             , [] , []) xs
-  Right i  -> foldl go (LLVM.Label "err", [i], []) xs
+almostToBlks (x : xs) = map orderAllocsBlks . synth $ case x of
+  Label lbl    -> foldl go (lbl, [], unreachable, []) xs
+  Instr{}      -> undefined
+  TermInstr{}  -> undefined
   where
     go
-      :: (LLVM.Label, [LLVM.Instruction], [LLVM.Blk])
+      :: (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.Blk])
       -> AlmostInstruction
-      -> (LLVM.Label, [LLVM.Instruction], [LLVM.Blk])
-    go (lbl, prev, acc) e = case e of
-      Left lbl' -> (lbl', [], acc ++ [LLVM.Blk lbl prev])
-      Right i   -> (lbl, prev ++ [i], acc)
-    synth (lbl, is, acc) = acc ++ [LLVM.Blk lbl is]
-    atLeastOne blk@(LLVM.Blk lbl is) = case is of
-      [] -> LLVM.Blk lbl [unreachable]
-      _  -> blk
-    orderAllocsBlks (LLVM.Blk lbl is) = (LLVM.Blk lbl (orderAllocs is))
+      -> (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.Blk])
+    go tt@(lbl, prev, ti, acc) curr = case curr of
+      Label lbl'    -> (lbl', []         , unreachable, acc ++ [LLVM.Blk lbl prev ti])
+      Instr i       -> (lbl , prev ++ [i], ti         , acc)
+      TermInstr ti' -> (lbl , prev       , ti'        , acc)
+    synth (lbl, is, ti, acc) = acc ++ [LLVM.Blk lbl is ti]
+    -- NOTE This is actually not needed
+    orderAllocsBlks (LLVM.Blk lbl is ti) = LLVM.Blk lbl (orderAllocs is) ti
 
 orderAllocs :: [LLVM.Instruction] -> [LLVM.Instruction]
 orderAllocs = uncurry (++) . foldl go ([],[])
@@ -257,7 +262,7 @@ trStmt fallThrough s = case s of
   Jlt.While e s0 -> do
     lblCond <- newLabelNamed "whileCond"
     lblBody <- newLabelNamed "whileBody"
-    emitLabel lblCond
+    jumpToNew lblCond
     cond e lblBody fallThrough
     emitLabel lblBody
     cont s0
@@ -265,11 +270,19 @@ trStmt fallThrough s = case s of
   where
     cont = trStmt fallThrough
 
-emitInstructions :: MonadWriter [Either a s]  m => [s] -> m ()
-emitInstructions = tell . map Right
+emitInstructions :: MonadWriter [AlmostInstruction]  m => [LLVM.Instruction] -> m ()
+emitInstructions = tell . map Instr
 
-emitLabel :: MonadWriter [Either a s] m => a -> m ()
-emitLabel = tell . pure . Left
+jumpToNew :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+jumpToNew lbl = do
+  emitTerminator (LLVM.Branch lbl)
+  emitLabel lbl
+
+emitLabel :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+emitLabel = tell . pure . Label
+
+emitTerminator :: MonadWriter [AlmostInstruction] m => LLVM.TermInstr -> m ()
+emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
   => Jlt.Ident -> Jlt.Expr -> m ()
@@ -288,7 +301,7 @@ llvmReturn
   => Jlt.Expr -> m ()
 llvmReturn e = do
   op <- resultOfExpression e
-  emitInstructions [LLVM.Return dummyTp op]
+  emitTerminator (LLVM.Return dummyTp op)
 
 showOp :: Show a => Either t a -> String
 showOp op = case op of
@@ -296,13 +309,13 @@ showOp op = case op of
   Left{} -> "?"
 
 llvmVoidReturn :: MonadCompile m => m ()
-llvmVoidReturn = emitInstructions [LLVM.VoidReturn]
+llvmVoidReturn = emitTerminator LLVM.VoidReturn
 
 cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
 cond e t f = do
   op <- resultOfExpression e
-  emitInstructions [LLVM.BranchCond op t f]
+  emitTerminator (LLVM.BranchCond op t f)
 
 -- | Assumes that the item is already initialized and exists in scope.
 varInit
