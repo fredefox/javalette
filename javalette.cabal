@@ -39,6 +39,7 @@ library
                        Javalette.Compiler
                        Javalette.Backend
                        Javalette.Backend.LLVM
+                       Javalette.Backend.LLVM.CodeGenerator
                        Javalette.Backend.LLVM.Renamer
   build-depends:       array
                      , base >= 4.7 && < 5
