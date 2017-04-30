@@ -15,7 +15,7 @@ module Javalette.Backend.LLVM.Language
   , Comparison(..)
   , Reg(..)
   , Operand
-  , Val
+  , Val(..)
   ) where
 
 import Prelude hiding (EQ)
@@ -169,7 +169,12 @@ type Operand = Either Reg Val
 pPrintOp :: Operand -> Doc
 pPrintOp = either pPrint pPrint
 
-type Val = Int
+data Val = ValInt Int | ValDoub Double deriving (Show)
+
+instance Pretty Val where
+  pPrint v = case v of
+    ValInt i -> int i
+    ValDoub d -> double d
 
 data Reg = Reg String deriving (Show)
 

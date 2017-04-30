@@ -334,8 +334,9 @@ trIdent (Jlt.Ident s) = LLVM.Reg s
 
 defaultValue :: Jlt.Type -> LLVM.Operand
 defaultValue t = case t of
-  Jlt.Int -> Right 0
-  _   -> Right 0
+  Jlt.Int -> Right (LLVM.ValInt 0)
+  Jlt.Doub -> Right (LLVM.ValDoub 0)
+  _   -> error $ "What's the default value of " ++ show t
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
@@ -386,10 +387,10 @@ resultOfExpressionTp
   => Jlt.Type -> Jlt.Expr -> m LLVM.Operand
 resultOfExpressionTp tp e = case e of
   Jlt.EVar i -> return (Left (trNameToReg i))
-  Jlt.ELitInt x -> return $ Right (fromInteger x)
-  Jlt.ELitDoub d -> return $ Right (round d)
-  Jlt.ELitTrue -> return $ Right 1
-  Jlt.ELitFalse -> return $ Right 0
+  Jlt.ELitInt x -> return $ Right (LLVM.ValInt $ fromInteger x)
+  Jlt.ELitDoub d -> return $ Right (LLVM.ValDoub d)
+  Jlt.ELitTrue -> return $ Right (LLVM.ValInt 0)
+  Jlt.ELitFalse -> return $ Right (LLVM.ValInt 1)
   Jlt.EAnn tp' e' -> resultOfExpressionTp tp' e'
   Jlt.EApp i es -> do
     es' <- es `forM` \(Jlt.EAnn tp' e') -> do
