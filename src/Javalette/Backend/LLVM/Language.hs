@@ -12,11 +12,13 @@ module Javalette.Backend.LLVM.Language
   , Blk(..)
   , Label(..)
   , Instruction(..)
+  , Comparison(..)
   , Reg(..)
   , Operand
   , Val
   ) where
 
+import Prelude hiding (EQ)
 import Javalette.PrettyPrint
 
 data Prog = Prog
@@ -117,20 +119,47 @@ data Instruction
   | BranchCond Operand Label Label
   -- * Arithmetic operations, integers
   | Add Type Operand Operand Reg
-  | SUB | MUL | SDIV | SREM
+  | Sub Type Operand Operand Reg
+  | Mul Type Operand Operand Reg
+  | Div Type Operand Operand Reg
+  | Rem Type Operand Operand Reg
   -- * Arithmetic operations, doubles
-  | FADD | FSUB | FMUL | FDIV
+  | FAdd Type Operand Operand Reg
+  | FSub Type Operand Operand Reg
+  | FMul Type Operand Operand Reg
+  | FDiv Type Operand Operand Reg
+  -- * Bitwise operators
+  | And Type Operand Operand Reg
+  | Or  Type Operand Operand Reg
   -- * Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
   | GETELEMTPTR
   | Store Type Operand Type Reg
   -- * Misc.
-  | ICMP | FCMP
+  | Icmp Comparison Type Operand Operand Reg
+  | FCMP
   | Call Type Name [(Type, Operand)] Reg
   | Unreachable
   | Pseudo String
   deriving (Show)
+
+data Comparison
+  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE
+  deriving (Show)
+
+instance Pretty Comparison where
+  pPrint c = text $ case c of
+    EQ -> "eq"
+    NE -> "ne"
+    UGT -> "ugt"
+    UGE -> "uge"
+    ULT -> "ult"
+    ULE -> "ule"
+    SGT -> "sgt"
+    SGE -> "sge"
+    SLT -> "slt"
+    SLE -> "sle"
 
 type Operand = Either Reg Val
 
@@ -152,10 +181,6 @@ instance Pretty Instruction where
       <+> text "label" <+> char '%' <> pPrint t <> char ','
       <+> text "label" <+> char '%' <> pPrint f
     Alloca tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
-    Add ty op0 op1 reg
-      -> pPrint reg <+> char '='
-      <+> text "add" <+> pPrint ty
-      <+> pPrintOp op0 <+> char ',' <+> pPrintOp op1
     Load ty0 ty1 regSrc regTrg
       -> pPrint regTrg <+> char '='
       <+> pPrint ty0 <+> char ',' <+> pPrint ty1
@@ -170,8 +195,26 @@ instance Pretty Instruction where
     Call t n args r
       -> pPrint r <+> char '='
       <+> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)
+    Add t op0 op1 r -> prettyBinInstr (text "add") t op0 op1 r
+    Sub t op0 op1 r -> prettyBinInstr (text "sub") t op0 op1 r
+    Mul t op0 op1 r -> prettyBinInstr (text "mul") t op0 op1 r
+    Div t op0 op1 r -> prettyBinInstr (text "div") t op0 op1 r
+    Rem t op0 op1 r -> prettyBinInstr (text "rem") t op0 op1 r
+    FAdd t op0 op1 r -> prettyBinInstr (text "fadd") t op0 op1 r
+    FSub t op0 op1 r -> prettyBinInstr (text "fsub") t op0 op1 r
+    FMul t op0 op1 r -> prettyBinInstr (text "fmul") t op0 op1 r
+    FDiv t op0 op1 r -> prettyBinInstr (text "fdiv") t op0 op1 r
+    And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
+    Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
+    Icmp cmpr t op0 op1 r -> prettyBinInstr (pPrint cmpr) t op0 op1 r
     _ -> text "{ugly instruction}"
---  pPrintList lvl xs = undefined
+
+prettyBinInstr
+  :: Doc -> Type -> Operand -> Operand -> Reg -> Doc
+prettyBinInstr s tp op0 op1 reg
+      = pPrint reg <+> char '='
+      <+> s <+> pPrint tp
+      <+> pPrintOp op0 <> char ',' <+> pPrintOp op1
 
 pPrintTypeOp :: [(Type, Operand)] -> Doc
 pPrintTypeOp = hsepBy (char ',') . map (\(t, o) -> pPrint t <+> pPrintOp o)

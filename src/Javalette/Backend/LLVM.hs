@@ -318,31 +318,31 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "rel " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
+    emitInstructions [LLVM.Icmp (relOp op) (trType tp) r0 r1 r]
     return (Left r)
   Jlt.EMul e0 op e1 -> do
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "mul " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
+    emitInstructions [mulOp op (trType tp) r0 r1 r]
     return (Left r)
   Jlt.EAdd e0 op e1 -> do
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "add " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
+    emitInstructions [addOp op (trType tp) r0 r1 r]
     return (Left r)
   Jlt.EAnd e0 e1 -> do
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "and " ++ show r0 ++ " " ++ show r1]
+    emitInstructions [LLVM.And (trType tp) r0 r1 r]
     return (Left r)
   Jlt.EOr e0 e1 -> do
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "or " ++ show r0 ++ " " ++ show r1]
+    emitInstructions [LLVM.Or (trType tp) r0 r1 r]
     return (Left r)
   Jlt.Neg e0 -> do
     r0 <- resultOfExpression e0
@@ -358,6 +358,40 @@ resultOfExpressionTp tp e = case e of
     r <- lookupString s
     emitInstructions [LLVM.Pseudo "string"]
     return (Left r)
+
+mulOp
+  :: Jlt.MulOp
+     -> LLVM.Type
+     -> LLVM.Operand
+     -> LLVM.Operand
+     -> LLVM.Reg
+     -> LLVM.Instruction
+mulOp op = case op of
+  Jlt.Times -> LLVM.Mul
+  Jlt.Div   -> LLVM.Div
+  Jlt.Mod   -> LLVM.Rem
+
+relOp
+  :: Jlt.RelOp
+  -> LLVM.Comparison
+relOp op = case op of
+  Jlt.LTH -> LLVM.SLT
+  Jlt.LE  -> LLVM.SLE
+  Jlt.GTH -> LLVM.SGT
+  Jlt.GE  -> LLVM.SGE
+  Jlt.EQU -> LLVM.EQ
+  Jlt.NE  -> LLVM.NE
+
+addOp
+  :: Jlt.AddOp
+     -> LLVM.Type
+     -> LLVM.Operand
+     -> LLVM.Operand
+     -> LLVM.Reg
+     -> LLVM.Instruction
+addOp op = case op of
+  Jlt.Plus  -> LLVM.Add
+  Jlt.Minus -> LLVM.Sub
 
 -- TODO We should traverse the ast, collect all strings, put them in a map
 -- and then declare them at the top of the llvm output. We should then lookup
