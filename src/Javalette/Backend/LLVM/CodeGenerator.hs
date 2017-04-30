@@ -463,7 +463,8 @@ resultOfExpressionTp tp e = case e of
   Jlt.Neg e0 -> do
     r0 <- resultOfExpression e0
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "neg " ++ show r0]
+    let tp' = trType tp
+    emitInstructions [LLVM.Sub tp' (zero tp') r0 r]
     return (Left r)
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
@@ -477,6 +478,11 @@ resultOfExpressionTp tp e = case e of
         path = [(LLVM.I 32, 0), (LLVM.I 32, 0)]
     emitInstructions [LLVM.GetElementPtr tp' (LLVM.Pointer tp') sReg path r]
     return (Left r)
+
+zero :: LLVM.Type -> LLVM.Operand
+zero t = case t of
+  LLVM.I{} -> Right (LLVM.ValInt 0)
+  LLVM.Double -> Right (LLVM.ValDoub 0)
 
 stringType :: String -> LLVM.Type
 stringType s = LLVM.Array (length s) (LLVM.I 8)

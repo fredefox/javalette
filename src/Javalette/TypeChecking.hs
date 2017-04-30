@@ -356,12 +356,12 @@ instance Infer Expr where
       (e0', t) <- infer e0
       unless (isNumeric t)
         $ throwError $ GenericError "Plz, can't negate non-numeric"
-      return (e0', t)
+      return (Neg e0', t)
     Not e0 -> do
       (e0', t) <- infer e0
       unless (t == AST.Bool)
         $ throwError $ GenericError "Plz, can't not non-boolean"
-      return (e0', t)
+      return (Not e0', t)
     EMul e0 op e1 -> do
       (e0', e1', t) <- case op of
         -- For some reason the modulo operator is special.
