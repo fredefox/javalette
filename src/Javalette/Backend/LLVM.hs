@@ -332,11 +332,32 @@ resultOfExpressionTp tp e = case e of
     r <- newReg
     emitInstructions [LLVM.Pseudo $ "add " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
     return (Left r)
+  Jlt.EAnd e0 e1 -> do
+    r0 <- resultOfExpression e0
+    r1 <- resultOfExpression e1
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "and " ++ show r0 ++ " " ++ show r1]
+    return (Left r)
+  Jlt.EOr e0 e1 -> do
+    r0 <- resultOfExpression e0
+    r1 <- resultOfExpression e1
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "or " ++ show r0 ++ " " ++ show r1]
+    return (Left r)
+  Jlt.Neg e0 -> do
+    r0 <- resultOfExpression e0
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "neg " ++ show r0]
+    return (Left r)
+  Jlt.Not e0 -> do
+    r0 <- resultOfExpression e0
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "not " ++ show r0]
+    return (Left r)
   Jlt.EString s -> do
     r <- lookupString s
     emitInstructions [LLVM.Pseudo "string"]
     return (Left r)
-  _ -> error $ "Not handling " ++ show e
 
 -- TODO We should traverse the ast, collect all strings, put them in a map
 -- and then declare them at the top of the llvm output. We should then lookup
