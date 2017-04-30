@@ -7,5 +7,5 @@ rm Javalette/Syntax/LexJavalette.x
 rm Javalette/Syntax/ParJavalette.y
 mv Javalette/Syntax/TestJavalette.hs Javalette/Parser/Main.hs
 rm Javalette/Syntax/TestJavalette
-rm Makefile
+mv Makefile{.bak,}
 sed -i '0,/Main/s//Javalette.Parser.Main/' Javalette/Parser/Main.hs

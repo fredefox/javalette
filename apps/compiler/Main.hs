@@ -3,6 +3,8 @@ module Main ( main ) where
 import Control.Monad
 import System.IO
 import System.Environment
+import System.Exit
+import System.FilePath
 
 import Javalette.Syntax
 import qualified Javalette.Parser as Parser
@@ -10,25 +12,34 @@ import qualified Javalette.TypeChecking as TypeChecking
 import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 import Javalette.PrettyPrint
+import qualified Javalette.Compiler as Compiler (compile)
 
 -- | Runs the compiler on all files given as arguments.
 main :: IO ()
 main = do
   inp <- parseInput
-  mapM_ (handleErrors . compile) inp
+  mapM_ compile (argsFilePaths inp)
 
-handleErrors t =case t of
+handleErrors :: Pretty err => Either err t -> IO t
+handleErrors errOrT = case errOrT of
     Left err  -> do
       putStrLnErr "ERROR"
       prettyPrint err
-    Right{} -> putStrLnErr "OK"
+      exitFailure
+    Right t -> do
+      putStrLnErr "OK"
+      return t
 
 -- TODO: We might like to do something more fancy (e.g. using
 -- optparse-applicative)
 -- | Assumes that all argumens are paths to files. Reads the contents of these
 -- files.
-parseInput :: IO [String]
-parseInput = getArgs >>= mapM readFile
+parseInput :: IO Args
+parseInput = Args <$> getArgs
+
+data Args = Args
+  { argsFilePaths :: [FilePath]
+  }
 
 -- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
@@ -39,13 +50,14 @@ instance Pretty CompilerErr where
     TypeErr err'  -> text "TYPE ERROR:" <+> pPrint err'
 
 -- | Parses and typechecks a program.
-compile :: String -> Either CompilerErr ()
-compile s = do
-  p <- parseProgram s
-  typecheck p
+compile :: FilePath -> IO ()
+compile fp = do
+  s <- readFile fp
+  pAnnt <- handleErrors $ parseProgram s >>= typecheck
+  Compiler.compile (dropExtension fp) pAnnt
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
-typecheck :: Prog -> Either CompilerErr ()
+typecheck :: Prog -> Either CompilerErr Prog
 typecheck = inLeft TypeErr . TypeChecking.typecheck
 
 -- | Wraps the error returned by `Parser.parse`.
