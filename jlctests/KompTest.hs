@@ -254,7 +254,7 @@ linkLLVM ver libPath bcFile = do
         , "opt" ++ ver
         , "llc" ++ ver ++ " > " ++ file
         ]
-      system ("gcc -oa.out " ++ file)
+      system ("clang -oa.out " ++ file)
 
     -- bitcode file containing the runtime
     runtimeBitcode = "runtime.bc"

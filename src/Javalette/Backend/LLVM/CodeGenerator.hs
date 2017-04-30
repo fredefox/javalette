@@ -420,9 +420,7 @@ resultOfExpressionTp tp e = case e of
   Jlt.ELitFalse -> return $ Right (LLVM.ValInt 1)
   Jlt.EAnn tp' e' -> resultOfExpressionTp tp' e'
   Jlt.EApp i es -> do
-    es' <- es `forM` \(Jlt.EAnn tp' e') -> do
-      r' <- resultOfExpressionTp tp' e'
-      return (trType tp', r')
+    es' <- es `forM` \(Jlt.EAnn tp' e') -> resultOfExpressionTp tp' e'
     -- ops <- mapM resultOfExpression es
     -- NOTE `r` may not be used!
     r <- newReg
@@ -542,8 +540,10 @@ resultOfExpression e = case e of
 
 -- NOTE `r` is only maybe used.
 -- Call Type Name [(Type, Operand)] Reg
-call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> LLVM.Reg -> m ()
-call t n ops r =
+call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> LLVM.Reg -> m ()
+call t n ops r = do
+  opTypes <- getArgTypes n
+  let tps = zip opTypes ops
   case t of
-    LLVM.Void -> emitInstructions [ LLVM.CallVoid t n ops ]
-    _ -> emitInstructions [ LLVM.Call t n ops r ]
+    LLVM.Void -> emitInstructions [ LLVM.CallVoid t n tps ]
+    _ -> emitInstructions [ LLVM.Call t n tps r ]
