@@ -54,7 +54,7 @@ newReg = LLVM.Reg . ('t':) . show <$> incrCounterRegs
 -- given string is needed.
 lookupString :: MonadCompile m => String -> m LLVM.Reg
 lookupString s = do
-  m <- ask
+  m <- asks envConstants
   case M.lookup s m of
     Nothing -> throwError (Generic "Could not find string constant")
     Just x -> return x
@@ -67,37 +67,57 @@ instance Pretty CompilerErr where
     Generic s -> text "ERR:" <+> text s
 
 type Compiler a
-  = ReaderT Constants
+  = ReaderT ReadEnv
     ( WriterT [AlmostInstruction]
       ( StateT Env (Except CompilerErr)
       )
     ) a
 
+data ReadEnv = ReadEnv
+  { envConstants :: Constants
+  , envFunctions :: Functions
+  }
+
 type Constants = Map String LLVM.Reg
+-- Maps functions to their argument types.
+type Functions = Map String [LLVM.Type]
+
+lookupFunction :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
+lookupFunction (LLVM.Name n) = do
+  m <- asks envFunctions
+  case M.lookup n m of
+    Nothing -> throwError (Generic $ "Could not find function" ++ show n)
+    Just f -> return f
+
+getArgTypes :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
+getArgTypes = lookupFunction
 
 type MonadCompile m =
   ( MonadWriter [AlmostInstruction] m
   , MonadState Env m
   , MonadError CompilerErr m
-  , MonadReader Constants m
+  , MonadReader ReadEnv m
   )
 
-runCompiler :: Constants -> Compiler a -> Either CompilerErr [AlmostInstruction]
-runCompiler cs = runExcept . (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` cs)
+runCompiler :: ReadEnv -> Compiler a -> Either CompilerErr [AlmostInstruction]
+runCompiler re = runExcept . (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` re)
 
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
 compileProg = aux . rename
   where
-    aux p@(Jlt.Program defs) = do
-        let cs = createMap $ concatMap collectStringsTopDef defs
-        pDefs <- mapM (trTopDef cs) defs
+    aux (Jlt.Program defs) = do
+        let cs = constantsMap $ concatMap collectStringsTopDef defs
+            declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
+            defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
+            re = ReadEnv cs (M.fromList (declTypes ++ defTypes))
+        pDefs <- mapM (trTopDef re) defs
         return LLVM.Prog
           { LLVM.pGlobals = map declString (M.toList cs)
           , LLVM.pDecls   = builtinDecls
           , LLVM.pDefs    = pDefs
           }
-    createMap :: [String] -> Constants
-    createMap xs = M.fromList . map (fmap intToReg) $ zip xs [0..]
+    constantsMap :: [String] -> Constants
+    constantsMap xs = M.fromList . map (fmap intToReg) $ zip xs [0..]
     intToReg :: Int -> LLVM.Reg
     intToReg = LLVM.Reg . (:) 's' . show
     declString :: (String, LLVM.Reg) -> LLVM.GlobalVar
@@ -105,8 +125,11 @@ compileProg = aux . rename
       { LLVM.gvName = LLVM.Name r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant s }
     stringType :: String -> LLVM.Type
     stringType s = LLVM.Array (length s) (LLVM.I 8)
+    trArgType (Jlt.FnDef _ _ args _) = map trArg args
+    trTopDefName (Jlt.FnDef _ i _ _) = trName i
+    unname :: LLVM.Name -> String
+    unname (LLVM.Name s) = s
 
--- todo: stub!
 collectStringsTopDef :: Jlt.TopDef -> [String]
 collectStringsTopDef (Jlt.FnDef _ _ _ b) = collectStringsBlk b
 
@@ -152,9 +175,9 @@ collectStringsExpr e = case e of
 impossibleRemoved :: a
 impossibleRemoved = error "IMPOSSIBLE - removed by typechecker"
 
-trTopDef :: Constants -> Jlt.TopDef -> Either CompilerErr LLVM.Def
-trTopDef cs (Jlt.FnDef t i args blk) = do
-  bss <- runCompiler cs $ do
+trTopDef :: ReadEnv -> Jlt.TopDef -> Either CompilerErr LLVM.Def
+trTopDef re (Jlt.FnDef t i args blk) = do
+  bss <- runCompiler re $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
@@ -346,6 +369,16 @@ builtinDecls =
     , LLVM.declName = LLVM.Name "printInt"
     , LLVM.declArgs = [LLVM.I 32]
     }
+  , LLVM.Decl
+    { LLVM.declType = LLVM.Void
+    , LLVM.declName = LLVM.Name "printDouble"
+    , LLVM.declArgs = [LLVM.Double]
+    }
+  , LLVM.Decl
+    { LLVM.declType = LLVM.Void
+    , LLVM.declName = LLVM.Name "printString"
+    , LLVM.declArgs = [LLVM.Pointer (LLVM.I 8)]
+    }
   ]
 
 resultOfExpressionTp
@@ -478,12 +511,9 @@ trExprTp tp e = case e of
 call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
 call t n ops = do
   r <- newReg
-  opTypes <- getArgTypesOf n
+  opTypes <- getArgTypes n
   emitInstructions
     [ LLVM.Call t n (zip opTypes ops) r ]
-  where
-    getArgTypesOf :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
-    getArgTypesOf _ = return $ repeat LLVM.Void
 
 trExpr
   :: MonadCompile m
