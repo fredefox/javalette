@@ -154,7 +154,6 @@ data Instruction
   | Fcmp Comparison Type Operand Operand Reg
   | Call Type Name [(Type, Operand)] Reg
   | CallVoid Type Name [(Type, Operand)]
-  | Pseudo String
   deriving (Show)
 
 -- TODO Split up comparisons in those that are integer-based and those that are
@@ -203,7 +202,6 @@ instance Pretty Instruction where
     Store tpOp op tpReg reg
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <> char ',' <+> pPrint tpReg <+> pPrint reg
-    Pseudo s -> char '{' <> text s <> char '}'
     Call t n args r
       -> pPrint r <+> char '='
       <+> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)

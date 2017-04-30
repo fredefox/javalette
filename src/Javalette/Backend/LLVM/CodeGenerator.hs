@@ -271,7 +271,7 @@ trStmt fallThrough s = case s of
     cond e lblBody fallThrough
     emitLabel lblBody
     cont s0
-  Jlt.SExp e -> trExpr e
+  Jlt.SExp e -> void $ resultOfExpression e
   where
     cont = trStmt fallThrough
 
@@ -423,8 +423,11 @@ resultOfExpressionTp tp e = case e of
     es' <- es `forM` \(Jlt.EAnn tp' e') -> do
       r' <- resultOfExpressionTp tp' e'
       return (trType tp', r')
+    -- ops <- mapM resultOfExpression es
+    -- NOTE `r` may not be used!
     r <- newReg
-    emitInstructions [LLVM.Call (trType tp) (trName i) es' r]
+    call (trType tp) (trName i) es' r
+    -- emitInstructions [LLVM.Call (trType tp) (trName i) es' r]
     return (Left r)
   Jlt.ERel e0 op e1 -> do
     r0 <- resultOfExpression e0
@@ -469,7 +472,8 @@ resultOfExpressionTp tp e = case e of
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
     r <- newReg
-    emitInstructions [LLVM.Pseudo $ "not " ++ show r0]
+    let tp' = trType tp
+    emitInstructions [LLVM.Sub tp' (zero tp' ) r0 r]
     return (Left r)
   Jlt.EString s -> do
     sReg <- lookupString s
@@ -536,50 +540,10 @@ resultOfExpression e = case e of
   Jlt.EAnn tp e' -> resultOfExpressionTp tp e'
   _         -> error "IMPOSSIBLE - was removed during type-checking"
 
-trExprTp
-  :: MonadCompile m
-  => Jlt.Type -> Jlt.Expr -> m ()
-trExprTp tp e = case e of
-  Jlt.EVar{} -> pse "var"
-  Jlt.ELitInt{} -> pse "lit-int"
-  Jlt.ELitDoub{} -> pse "lit-doub"
-  Jlt.ELitTrue -> pse "true"
-  Jlt.ELitFalse{} -> pse "false"
-  Jlt.EApp i es -> do
-    ops <- mapM resultOfExpression es
-    call (trType tp) (trName i) ops
-  Jlt.EString s -> pse ("str " ++ s)
-  Jlt.Neg{} -> pse "neg"
-  Jlt.Not{} -> pse "not"
-  Jlt.EMul{} -> pse "mul"
-  Jlt.EAdd{} -> pse "add"
-  Jlt.ERel{} -> pse "rel"
-  Jlt.EAnd{} -> pse "and"
-  Jlt.EOr{} -> pse "or"
-  -- This ought not to occur:
-  Jlt.EAnn tp' e0 -> trExprTp tp' e0
-  where
-    pse s = emitInstructions [LLVM.Pseudo s]
-
+-- NOTE `r` is only maybe used.
 -- Call Type Name [(Type, Operand)] Reg
-call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
-call t n ops = do
-  opTypes <- getArgTypes n
-  let tps = zip opTypes ops
+call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> LLVM.Reg -> m ()
+call t n ops r =
   case t of
-    LLVM.Void -> emitInstructions [ LLVM.CallVoid t n tps ]
-    _ -> do
-      r <- newReg
-      emitInstructions [ LLVM.Call t n (zip opTypes ops) r ]
-
-trExpr
-  :: MonadCompile m
-  => Jlt.Expr -> m ()
-trExpr e = case e of
-  Jlt.EAnn tp e' -> trExprTp tp e'
-  _              -> err
-  where
-    err = error "IMPOSSIBLE - Should've been annotated by the type-checker"
-
-dummyTp :: LLVM.Type
-dummyTp = LLVM.I 64
+    LLVM.Void -> emitInstructions [ LLVM.CallVoid t n ops ]
+    _ -> emitInstructions [ LLVM.Call t n ops r ]
