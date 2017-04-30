@@ -54,7 +54,7 @@ compile :: FilePath -> IO ()
 compile fp = do
   s <- readFile fp
   pAnnt <- handleErrors $ parseProgram s >>= typecheck
-  Compiler.compile (takeBaseName fp) pAnnt
+  Compiler.compile (dropExtension fp) pAnnt
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> Either CompilerErr Prog

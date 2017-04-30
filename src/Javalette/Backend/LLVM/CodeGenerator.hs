@@ -193,8 +193,7 @@ trArg :: Jlt.Arg -> LLVM.Arg
 trArg (Jlt.Argument t i) = LLVM.Arg (trType t) (trNameToRegArg i)
 
 cgArg :: MonadCompile m => Jlt.Arg -> m ()
-cgArg (Jlt.Argument t i) = do
-  varInit (trType t) (trNameToReg i) (Left (trNameToRegArg i))
+cgArg (Jlt.Argument t i) = varInit (trType t) (trNameToReg i) (Left (trNameToRegArg i))
 
 trBlk
   :: MonadCompile m
@@ -432,7 +431,10 @@ resultOfExpressionTp tp e = case e of
     r1 <- resultOfExpression e1
     r <- newReg
     let tp' = trType $ typeof e0
-    emitInstructions [LLVM.Icmp (relOp op) tp' r0 r1 r]
+        i   = case tp' of
+          LLVM.I{} -> LLVM.Icmp
+          LLVM.Double -> LLVM.Fcmp
+    emitInstructions [i (relOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EMul e0 op e1 -> do
     r0 <- resultOfExpression e0
@@ -486,20 +488,25 @@ mulOp
      -> LLVM.Operand
      -> LLVM.Reg
      -> LLVM.Instruction
-mulOp op = case op of
-  Jlt.Times -> LLVM.Mul
-  Jlt.Div   -> LLVM.Div
-  Jlt.Mod   -> LLVM.Rem
+mulOp op tp = case tp of
+  LLVM.I{} -> case op of
+    Jlt.Times -> LLVM.Mul tp
+    Jlt.Div   -> LLVM.SDiv tp
+    Jlt.Mod   -> LLVM.Rem tp
+  LLVM.Double -> case op of
+    Jlt.Times -> LLVM.FMul tp
+    Jlt.Div   -> LLVM.FDiv tp
 
 relOp
   :: Jlt.RelOp
+  -> LLVM.Type
   -> LLVM.Comparison
-relOp op = case op of
+relOp op tp = case op of
   Jlt.LTH -> LLVM.SLT
   Jlt.LE  -> LLVM.SLE
   Jlt.GTH -> LLVM.SGT
   Jlt.GE  -> LLVM.SGE
-  Jlt.EQU -> LLVM.EQ
+  Jlt.EQU -> case tp of LLVM.I{} -> LLVM.EQ ; LLVM.Double -> LLVM.OEQ
   Jlt.NE  -> LLVM.NE
 
 addOp
@@ -509,9 +516,13 @@ addOp
      -> LLVM.Operand
      -> LLVM.Reg
      -> LLVM.Instruction
-addOp op = case op of
-  Jlt.Plus  -> LLVM.Add
-  Jlt.Minus -> LLVM.Sub
+addOp op tp = case tp of
+  LLVM.I{} -> case op of
+    Jlt.Plus  -> LLVM.Add tp
+    Jlt.Minus -> LLVM.Sub tp
+  LLVM.Double -> case op of
+    Jlt.Plus  -> LLVM.FAdd tp
+    Jlt.Minus -> LLVM.FSub tp
 
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand

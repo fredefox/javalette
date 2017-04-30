@@ -134,7 +134,7 @@ data Instruction
   = Add Type Operand Operand Reg
   | Sub Type Operand Operand Reg
   | Mul Type Operand Operand Reg
-  | Div Type Operand Operand Reg
+  | SDiv Type Operand Operand Reg
   | Rem Type Operand Operand Reg
   -- * Arithmetic operations, doubles
   | FAdd Type Operand Operand Reg
@@ -151,14 +151,16 @@ data Instruction
   | Store Type Operand Type Reg
   -- * Misc.
   | Icmp Comparison Type Operand Operand Reg
-  | FCMP
+  | Fcmp Comparison Type Operand Operand Reg
   | Call Type Name [(Type, Operand)] Reg
   | CallVoid Type Name [(Type, Operand)]
   | Pseudo String
   deriving (Show)
 
+-- TODO Split up comparisons in those that are integer-based and those that are
+-- not.
 data Comparison
-  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE
+  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE | OEQ
   deriving (Show)
 
 instance Pretty Comparison where
@@ -173,6 +175,7 @@ instance Pretty Comparison where
     SGE -> "sge"
     SLT -> "slt"
     SLE -> "sle"
+    OEQ -> "oeq"
 
 type Operand = Either Reg Val
 
@@ -209,7 +212,7 @@ instance Pretty Instruction where
     Add t op0 op1 r -> prettyBinInstr (text "add") t op0 op1 r
     Sub t op0 op1 r -> prettyBinInstr (text "sub") t op0 op1 r
     Mul t op0 op1 r -> prettyBinInstr (text "mul") t op0 op1 r
-    Div t op0 op1 r -> prettyBinInstr (text "div") t op0 op1 r
+    SDiv t op0 op1 r -> prettyBinInstr (text "sdiv") t op0 op1 r
     Rem t op0 op1 r -> prettyBinInstr (text "rem") t op0 op1 r
     FAdd t op0 op1 r -> prettyBinInstr (text "fadd") t op0 op1 r
     FSub t op0 op1 r -> prettyBinInstr (text "fsub") t op0 op1 r
@@ -218,12 +221,12 @@ instance Pretty Instruction where
     And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
     Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
     Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
+    Fcmp cmpr t op0 op1 r -> prettyBinInstr (text "fcmp" <+> pPrint cmpr) t op0 op1 r
   -- <result> = getelementptr <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
     GetElementPtr tp0 tp1 nm args trg ->
       pPrint trg <+> char '=' <+>
       text "getelementptr" <+> pPrint tp0 <> char ',' <+> pPrint tp1 <+>
       pPrint nm <> char ',' <+> printArgs args
-    _ -> text "{ugly instruction}"
 
 printArgs :: [(Type, Int)] -> Doc
 printArgs = hsepBy (char ',') . map arg

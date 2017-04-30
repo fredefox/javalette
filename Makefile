@@ -2,6 +2,7 @@ all: build
 
 build:
 	stack build
+	llvm-as-3.8 lib/runtime.ll
 	ln -fs `stack path --project-root`/`stack path --dist-dir`/build/jlc/jlc `stack path --project-root`
 
 install:
