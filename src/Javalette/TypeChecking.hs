@@ -341,56 +341,67 @@ typecheckItem t i = case i of
 
 instance TypeCheck Expr where
 instance Infer Expr where
-  infer e = annotate e <$> case e of
-    EVar i -> lookupTypeVar i
-    ELitInt{} -> return AST.Int
-    ELitDoub{} -> return AST.Doub
-    ELitTrue -> return AST.Bool
-    ELitFalse -> return AST.Bool
+  infer e = uncurry annotate <$> case e of
     EApp i exprs -> do
       (t, args) <- lookupFunTypeAndArgs i
-      argsMatch exprs args
-      return t
-    EString{} -> return AST.String
+      args' <- argsMatch exprs args
+      return (EApp i args', t)
+    EVar i -> (,) e <$> lookupTypeVar i
+    ELitInt{} -> (,) e <$> return AST.Int
+    ELitDoub{} -> (,) e <$> return AST.Doub
+    ELitTrue -> return (e, AST.Bool)
+    ELitFalse -> return (e, AST.Bool)
+    EString{} -> return (e, AST.String)
     Neg e0 -> do
-      (_, t) <- infer e0
+      (e0', t) <- infer e0
       unless (isNumeric t)
         $ throwError $ GenericError "Plz, can't negate non-numeric"
-      return t
+      return (e0', t)
     Not e0 -> do
-      (_, t) <- infer e0
+      (e0', t) <- infer e0
       unless (t == AST.Bool)
         $ throwError $ GenericError "Plz, can't not non-boolean"
-      return t
-    EMul e0 op e1 -> case op of
-      -- For some reason the modulo operator is special.
-      Mod -> checkBinOp isInteger e0 e1
-      _   -> checkBinOp isNumeric e0 e1
-    EAdd e0 _ e1 -> checkBinOp isNumeric e0 e1
-    ERel e0 op e1 -> checkRel op e0 e1 >> return AST.Bool
-    EAnd e0 e1 -> checkBinOp (== AST.Bool) e0 e1
-    EOr e0 e1 -> checkBinOp (== AST.Bool) e0 e1
-    EAnn tp _ -> return tp
+      return (e0', t)
+    EMul e0 op e1 -> do
+      (e0', e1', t) <- case op of
+        -- For some reason the modulo operator is special.
+        Mod -> checkBinOp isInteger e0 e1
+        _   -> checkBinOp isNumeric e0 e1
+      return (EMul e0' op e1', t)
+    EAdd e0 op e1 -> do
+      (e0', e1', t) <- checkBinOp isNumeric e0 e1
+      return (EAdd e0' op e1', t)
+    ERel e0 op e1 -> do
+      (e0', e1') <- checkRel op e0 e1
+      return (ERel e0' op e1', AST.Bool)
+    EAnd e0 e1 -> do
+      (e0', e1', t) <- checkBinOp (== AST.Bool) e0 e1
+      return (EAnd e0' e1', t)
+    EOr e0 e1 -> do
+      (e0', e1', t) <- checkBinOp (== AST.Bool) e0 e1
+      return (EOr e0' e1', t)
+    EAnn tp _ -> return (e, tp)
 
 annotate :: Expr -> Type -> (Expr, Type)
 annotate e t = (EAnn t e, t)
 
 -- | Helper-function for typechecking `RelOp`.
-checkRel :: RelOp -> Expr -> Expr -> TypeChecker ()
+checkRel :: RelOp -> Expr -> Expr -> TypeChecker (Expr, Expr)
 checkRel _ e0 e1 = do
-  (_, t0) <- infer e0
-  (_, t1) <- infer e1
+  (e0', t0) <- infer e0
+  (e1', t1) <- infer e1
   unless (t0 == t1) throwMixErr
+  return (e0', e1')
 
 -- | Helper-function for typechecking binary operators.
-checkBinOp :: (Type -> Bool) -> Expr -> Expr -> TypeChecker Type
+checkBinOp :: (Type -> Bool) -> Expr -> Expr -> TypeChecker (Expr, Expr, Type)
 checkBinOp p e0 e1 = do
-      (_, t0) <- infer e0
+      (e0', t0) <- infer e0
       unless (p t0) throwNumErr
-      (_, t1) <- infer e1
+      (e1', t1) <- infer e1
       unless (p t1) throwNumErr
       unless (t1 == t0) throwMixErr
-      return t1
+      return (e0', e1', t1)
 
 -- | Generic numerical error.
 throwNumErr :: TypeChecker a
@@ -401,29 +412,34 @@ throwMixErr :: TypeChecker a
 throwMixErr = throwError $ GenericError "Plz, can't mix and match numerical values"
 
 -- | Checks that the type of a list of expression match the list of arguments.
--- This also checks that the arity match.
+-- This also checks that the arity match. It returns an annotated version of the
+-- arguments.
 argsMatch
   :: [Expr] -- ^ The expressions to infer the type of
   -> [Arg]  -- ^ the arguments whose types to match against
-  -> TypeChecker ()
-argsMatch = zipWithMRagged_ (GenericError "Arg mismatch") argMatch
+  -> TypeChecker [Expr]
+argsMatch = zipWithMRagged (GenericError "Arg mismatch") argMatch
 
 -- | A version of `Control.Monad.zipWithM_` that rejects ragged lists with the
 -- specified error.
-zipWithMRagged_ :: MonadError e m => e -> (a -> b -> m c) -> [a] -> [b] -> m ()
-zipWithMRagged_ e _ [] ys = case ys of
-  [] -> return ()
+zipWithMRagged :: MonadError e m => e -> (a -> b -> m c) -> [a] -> [b] -> m [c]
+zipWithMRagged e _ [] ys = case ys of
+  [] -> return []
   _  -> throwError e
-zipWithMRagged_ e f (x : xs) ys = case ys of
+zipWithMRagged e f (x : xs) ys = case ys of
   []        -> throwError e
-  (y : yss) -> f x y >> zipWithMRagged_ e f xs yss
+  (y : yss) -> do
+    x' <- f x y
+    xs' <- zipWithMRagged e f xs yss
+    return (x':xs')
 
 -- | Checks that an expression matches the type of an argument.
-argMatch :: Expr -> Arg -> TypeChecker ()
+argMatch :: Expr -> Arg -> TypeChecker Expr
 argMatch e (Argument t _) = do
-  (_, t') <- infer e
+  (e', t') <- infer e
   unless (t == t')
     $ throwError TypeMismatch
+  return e'
 
 ------------------------------------------------------------
 -- * Static control flow checks

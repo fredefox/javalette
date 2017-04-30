@@ -222,9 +222,8 @@ showOp op = case op of
   Right x -> show x
   Left{} -> "?"
 
--- TODO
 llvmVoidReturn :: MonadCompile m => m ()
-llvmVoidReturn = emitInstructions [LLVM.Pseudo "void return"]
+llvmVoidReturn = emitInstructions [LLVM.VoidReturn]
 
 cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
@@ -281,12 +280,13 @@ trArg (Jlt.Argument t _) = trType t
 
 trType :: Jlt.Type -> LLVM.Type
 trType t = case t of
-  Jlt.Int -> LLVM.I64
-  -- TODO This is wrong!
-  Jlt.Doub -> LLVM.I64
-  Jlt.Bool -> undefined
+  Jlt.Int -> LLVM.I 64
+  Jlt.Doub -> LLVM.Double
+  Jlt.Bool -> LLVM.I 1
   Jlt.Void -> LLVM.Void
-  Jlt.String -> undefined
+  Jlt.String -> error
+    $  "The string type cannot be translated directly. "
+    ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
 
 builtinDecls :: [LLVM.Decl]
@@ -294,24 +294,34 @@ builtinDecls =
   [ LLVM.Decl
     { LLVM.declType = LLVM.Void
     , LLVM.declName = LLVM.Name "printInt"
-    , LLVM.declArgs = [LLVM.I32]
+    , LLVM.declArgs = [LLVM.I 32]
     }
   ]
 
--- For now we will just assume that the expression is `42`.
 resultOfExpressionTp
   :: MonadCompile m
   => Jlt.Type -> Jlt.Expr -> m LLVM.Operand
 resultOfExpressionTp tp e = case e of
-  Jlt.EVar{} -> todo
+  Jlt.EVar i -> return (Left (trNameToReg i))
   Jlt.ELitInt x -> return $ Right (fromInteger x)
   Jlt.ELitDoub d -> return $ Right (round d)
   Jlt.ELitTrue -> return $ Right 1
   Jlt.ELitFalse -> return $ Right 0
   Jlt.EAnn tp' e' -> resultOfExpressionTp tp' e'
-  _ -> todo
-  where
-    todo = return $ Right 42
+  Jlt.EApp i es -> do
+    es' <- es `forM` \(Jlt.EAnn tp' e') -> do
+      r' <- resultOfExpressionTp tp' e'
+      return (trType tp', r')
+    r <- newReg
+    emitInstructions [LLVM.Call (trType tp) (trName i) es' r]
+    return (Left r)
+  Jlt.ERel e0 op e1 -> do
+    r0 <- resultOfExpression e0
+    r1 <- resultOfExpression e1
+    r <- newReg
+    emitInstructions [LLVM.Pseudo $ "rel " ++ show op ++ " " ++ show r0 ++ " " ++ show r1]
+    return (Left r)
+  _ -> error $ "Not handling " ++ show e
 
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand
@@ -365,4 +375,4 @@ trExpr e = case e of
     err = error "IMPOSSIBLE - Should've been annotated by the type-checker"
 
 dummyTp :: LLVM.Type
-dummyTp = LLVM.I64
+dummyTp = LLVM.I 64

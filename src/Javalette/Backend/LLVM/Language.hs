@@ -48,16 +48,17 @@ quoted s = char '"' <+> text s <+> char '"'
 
 data Type
   = Void
-  | I32
-  | I64
+  | I Int
+  | Double
   | Pointer Type
+  | Array Int Type
   deriving (Show)
 
 instance Pretty Type where
   pPrint t = case t of
     Void -> text "void"
-    I32  -> text "i32"
-    I64  -> text "i64"
+    I i  -> text "i" <> text (show i)
+    Double -> text "double"
     Pointer t0 -> pPrint t0 <> char '*'
 
 data Constant = Constant String deriving (Show)
@@ -111,6 +112,7 @@ instance Pretty Label where
 data Instruction
   -- * Terminator instructions
   = Return Type Operand
+  | VoidReturn
   | Branch Label
   | BranchCond Operand Label Label
   -- * Arithmetic operations, integers
@@ -162,6 +164,7 @@ instance Pretty Instruction where
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <> char ',' <+> pPrint tpReg <+> pPrint reg
     Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
+    VoidReturn -> text "ret void"
     Unreachable -> text "unreachable"
     Pseudo s -> char '{' <> text s <> char '}'
     Call t n args r
