@@ -8,6 +8,7 @@ module Javalette.Backend.LLVM
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Writer
+import Control.Monad.Reader
 import System.IO
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -66,6 +67,17 @@ newLabelNamed _ = newLabel
 newReg :: MonadCompile m => m LLVM.Reg
 newReg = LLVM.Reg . ('t':) . show <$> incrCounterRegs
 
+-- TODO We should traverse the ast, collect all strings, put them in a map
+-- and then declare them at the top of the llvm output. We should then lookup
+-- the name of that declaration and use the pointer to that value whenever a
+-- given string is needed.
+lookupString :: MonadCompile m => String -> m LLVM.Reg
+lookupString s = do
+  m <- ask
+  case M.lookup s m of
+    Nothing -> throwError (Generic "Could not find string constant")
+    Just x -> return x
+
 emptyEnv :: Env
 emptyEnv = Env 0 0
 
@@ -73,37 +85,95 @@ instance Pretty CompilerErr where
   pPrint err = case err of
     Generic s -> text "ERR:" <+> text s
 
-type Compiler a = WriterT [AlmostInstruction] (StateT Env (Except CompilerErr)) a
+type Compiler a
+  = ReaderT Constants
+    ( WriterT [AlmostInstruction]
+      ( StateT Env (Except CompilerErr)
+      )
+    ) a
+
+type Constants = Map String LLVM.Reg
 
 type MonadCompile m =
   ( MonadWriter [AlmostInstruction] m
   , MonadState Env m
   , MonadError CompilerErr m
+  , MonadReader Constants m
   )
 
-runCompiler :: Compiler a -> Either CompilerErr [AlmostInstruction]
-runCompiler = runExcept . (`evalStateT` emptyEnv) . execWriterT
+runCompiler :: Constants -> Compiler a -> Either CompilerErr [AlmostInstruction]
+runCompiler cs = runExcept . (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` cs)
 
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
 compileProg = aux . rename
   where
     aux p@(Jlt.Program defs) = do
-        -- NOTE I don't think we actually need to persist the state across the
-        -- different topdefs.
-        pDefs <- mapM trTopDef defs
+        let cs = createMap $ concatMap collectStringsTopDef defs
+        pDefs <- mapM (trTopDef cs) defs
         return LLVM.Prog
-          { LLVM.pGlobals = collectGlobals p
+          { LLVM.pGlobals = map declString (M.toList cs)
           , LLVM.pDecls   = builtinDecls
           , LLVM.pDefs    = pDefs
           }
+    createMap :: [String] -> Constants
+    createMap xs = M.fromList . map (fmap intToReg) $ zip xs [0..]
+    intToReg :: Int -> LLVM.Reg
+    intToReg = LLVM.Reg . (:) 's' . show
+    declString :: (String, LLVM.Reg) -> LLVM.GlobalVar
+    declString (s, LLVM.Reg r) = LLVM.GlobalVar
+      { LLVM.gvName = LLVM.Name r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant s }
+    stringType :: String -> LLVM.Type
+    stringType s = LLVM.Array (length s) (LLVM.I 8)
 
--- | TODO Stub!
-collectGlobals :: Jlt.Prog -> [LLVM.GlobalVar]
-collectGlobals _ = []
+-- todo: stub!
+collectStringsTopDef :: Jlt.TopDef -> [String]
+collectStringsTopDef (Jlt.FnDef _ _ _ b) = collectStringsBlk b
 
-trTopDef :: Jlt.TopDef -> Either CompilerErr LLVM.Def
-trTopDef (Jlt.FnDef t i args blk) = do
-  bss <- fmap almostToBlks $ runCompiler $ do
+collectStringsBlk :: Jlt.Blk -> [String]
+collectStringsBlk (Jlt.Block stmts) = concatMap collectStringsStmt stmts
+
+collectStringsStmt :: Jlt.Stmt -> [String]
+collectStringsStmt s = case s of
+  Jlt.Empty -> []
+  Jlt.BStmt b -> collectStringsBlk b
+  Jlt.Decl _ its -> concatMap collectStringsItem its
+  Jlt.Ass _ e -> collectStringsExpr e
+  Jlt.Incr{} -> impossibleRemoved ; Jlt.Decr{} -> impossibleRemoved
+  Jlt.Ret e -> collectStringsExpr e
+  Jlt.VRet -> []
+  Jlt.Cond e s0 -> collectStringsExpr e ++ collectStringsStmt s0
+  Jlt.CondElse e s0 s1 -> concat
+    [ collectStringsExpr e
+    , collectStringsStmt s0
+    , collectStringsStmt s1
+    ]
+  Jlt.While e s0 -> collectStringsExpr e ++ collectStringsStmt s0
+  Jlt.SExp e -> collectStringsExpr e
+
+collectStringsItem :: Jlt.Item -> [String]
+collectStringsItem i = case i of
+  Jlt.NoInit{} -> []
+  Jlt.Init _ e -> collectStringsExpr e
+
+collectStringsExpr :: Jlt.Expr -> [String]
+collectStringsExpr e = case e of
+  Jlt.EVar{} -> [] ; Jlt.ELitInt{} -> []; Jlt.ELitDoub{} -> []
+  Jlt.ELitTrue -> []; Jlt.ELitFalse -> []; Jlt.EApp _ es -> concatMap collectStringsExpr es
+  Jlt.EString s -> pure s; Jlt.Neg e0 -> collectStringsExpr e0
+  Jlt.Not e0 -> collectStringsExpr e0;
+  Jlt.EMul e0 _ e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
+  Jlt.EAdd e0 _ e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
+  Jlt.ERel e0 _ e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
+  Jlt.EAnd e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
+  Jlt.EOr e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
+  Jlt.EAnn _ e0 -> collectStringsExpr e0
+
+impossibleRemoved :: a
+impossibleRemoved = error "IMPOSSIBLE - removed by typechecker"
+
+trTopDef :: Constants -> Jlt.TopDef -> Either CompilerErr LLVM.Def
+trTopDef cs (Jlt.FnDef t i args blk) = do
+  bss <- runCompiler cs $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
@@ -113,7 +183,7 @@ trTopDef (Jlt.FnDef t i args blk) = do
     { LLVM.defType = trType t
     , LLVM.defName = trName i
     , LLVM.defArgs = map trArg args
-    , LLVM.defBlks = bss
+    , LLVM.defBlks = almostToBlks bss
     }
 
 trBlk
@@ -356,7 +426,6 @@ resultOfExpressionTp tp e = case e of
     return (Left r)
   Jlt.EString s -> do
     r <- lookupString s
-    emitInstructions [LLVM.Pseudo "string"]
     return (Left r)
 
 mulOp
@@ -392,13 +461,6 @@ addOp
 addOp op = case op of
   Jlt.Plus  -> LLVM.Add
   Jlt.Minus -> LLVM.Sub
-
--- TODO We should traverse the ast, collect all strings, put them in a map
--- and then declare them at the top of the llvm output. We should then lookup
--- the name of that declaration and use the pointer to that value whenever a
--- given string is needed.
-lookupString :: MonadCompile m => String -> m LLVM.Reg
-lookupString _ = newReg
 
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand

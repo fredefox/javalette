@@ -37,7 +37,8 @@ data GlobalVar = GlobalVar
   } deriving (Show)
 
 instance Pretty GlobalVar where
-  pPrint (GlobalVar nm tp val) = pPrint nm <+> pPrint tp <+> pPrint val
+  pPrint (GlobalVar nm tp val)
+    = pPrint nm <+> char '=' <+> text "global" <+> pPrint tp <+> pPrint val
   pPrintList _lvl xs = vcat (map pPrint xs)
 
 data Name = Name String deriving (Show)
@@ -62,11 +63,12 @@ instance Pretty Type where
     I i  -> text "i" <> text (show i)
     Double -> text "double"
     Pointer t0 -> pPrint t0 <> char '*'
+    Array n t' -> brackets (int n <+> char 'x' <+> pPrint t')
 
 data Constant = Constant String deriving (Show)
 
 instance Pretty Constant where
-  pPrint (Constant s) = text s
+  pPrint (Constant s) = char 'c' <> doubleQuotes (text s)
 
 data Decl = Decl
   { declType :: Type
