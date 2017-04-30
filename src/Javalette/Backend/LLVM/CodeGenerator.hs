@@ -52,7 +52,7 @@ newReg = LLVM.Reg . ('t':) . show <$> incrCounterRegs
 -- and then declare them at the top of the llvm output. We should then lookup
 -- the name of that declaration and use the pointer to that value whenever a
 -- given string is needed.
-lookupString :: MonadCompile m => String -> m LLVM.Reg
+lookupString :: MonadCompile m => String -> m LLVM.Name
 lookupString s = do
   m <- asks envConstants
   case M.lookup s m of
@@ -78,7 +78,7 @@ data ReadEnv = ReadEnv
   , envFunctions :: Functions
   }
 
-type Constants = Map String LLVM.Reg
+type Constants = Map String LLVM.Name
 -- Maps functions to their argument types.
 type Functions = Map String [LLVM.Type]
 
@@ -118,14 +118,12 @@ compileProg = aux . rename
           }
     constantsMap :: [String] -> Constants
     constantsMap xs = M.fromList . map (fmap intToReg) $ zip xs [0..]
-    intToReg :: Int -> LLVM.Reg
-    intToReg = LLVM.Reg . (:) 's' . show
-    declString :: (String, LLVM.Reg) -> LLVM.GlobalVar
-    declString (s, LLVM.Reg r) = LLVM.GlobalVar
-      { LLVM.gvName = LLVM.Name r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant s }
-    stringType :: String -> LLVM.Type
-    stringType s = LLVM.Array (length s) (LLVM.I 8)
-    trArgType (Jlt.FnDef _ _ args _) = map trArg args
+    intToReg :: Int -> LLVM.Name
+    intToReg = LLVM.Name . (:) 's' . show
+    declString :: (String, LLVM.Name) -> LLVM.GlobalVar
+    declString (s, r) = LLVM.GlobalVar
+      { LLVM.gvName = r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant s }
+    trArgType (Jlt.FnDef _ _ args _) = map argType args
     trTopDefName (Jlt.FnDef _ i _ _) = trName i
     unname :: LLVM.Name -> String
     unname (LLVM.Name s) = s
@@ -181,6 +179,7 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
+    mapM_ cgArg args
     trBlk fallThrough blk
     emitLabel fallThrough
   return LLVM.Def
@@ -189,6 +188,13 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     , LLVM.defArgs = map trArg args
     , LLVM.defBlks = almostToBlks bss
     }
+
+trArg :: Jlt.Arg -> LLVM.Arg
+trArg (Jlt.Argument t i) = LLVM.Arg (trType t) (trNameToRegArg i)
+
+cgArg :: MonadCompile m => Jlt.Arg -> m ()
+cgArg (Jlt.Argument t i) = do
+  varInit (trType t) (trNameToReg i) (Left (trNameToRegArg i))
 
 trBlk
   :: MonadCompile m
@@ -240,7 +246,7 @@ trStmt
 trStmt fallThrough s = case s of
   Jlt.Empty -> return ()
   Jlt.BStmt b -> trBlk fallThrough b
-  Jlt.Decl typ its -> mapM_ (varInit typ) its
+  Jlt.Decl typ its -> mapM_ (itemInit typ) its
   Jlt.Ass i e -> assign i e
   Jlt.Incr{} -> undefined "IMPOSSIBLE - removed by typechecker"
   Jlt.Decr{} -> undefined "IMPOSSIBLE - removed by typechecker"
@@ -319,30 +325,31 @@ cond e t f = do
   emitTerminator (LLVM.BranchCond op t f)
 
 -- | Assumes that the item is already initialized and exists in scope.
-varInit
+itemInit
   :: MonadCompile m
   => Jlt.Type -> Jlt.Item -> m ()
-varInit jltType itm = do
+itemInit jltType itm = do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
       tp = trType jltType
       reg :: LLVM.Reg
       reg = trIdent . itemName $ itm
-      varInit'
-        :: MonadCompile m
-        => LLVM.Operand -> m ()
-      varInit' op = emitInstructions
-        [ LLVM.Alloca tp reg
-        , LLVM.Store tp op (LLVM.Pointer tp) reg
-        ]
   case itm of
-    Jlt.NoInit{} -> varInit' (defaultValue jltType)
+    Jlt.NoInit{} -> varInit tp reg (defaultValue jltType)
     -- Here we must first compute the value of the expression
     -- and store the result of that in the variable.
     Jlt.Init _ e -> do
       reg0 <- resultOfExpression e
-      varInit' reg0
+      varInit tp reg reg0
 
+
+varInit
+  :: MonadCompile m
+  => LLVM.Type -> LLVM.Reg -> LLVM.Operand -> m ()
+varInit tp reg op = emitInstructions
+  [ LLVM.Alloca tp reg
+  , LLVM.Store tp op (LLVM.Pointer tp) reg
+  ]
 trIdent :: Jlt.Ident -> LLVM.Reg
 trIdent (Jlt.Ident s) = LLVM.Reg s
 
@@ -363,8 +370,11 @@ trName (Jlt.Ident s) = LLVM.Name s
 trNameToReg :: Jlt.Ident -> LLVM.Reg
 trNameToReg (Jlt.Ident s) = LLVM.Reg s
 
-trArg :: Jlt.Arg -> LLVM.Type
-trArg (Jlt.Argument t _) = trType t
+trNameToRegArg :: Jlt.Ident -> LLVM.Reg
+trNameToRegArg (Jlt.Ident s) = LLVM.Reg (s ++ ".val")
+
+argType :: Jlt.Arg -> LLVM.Type
+argType (Jlt.Argument t _) = trType t
 
 trType :: Jlt.Type -> LLVM.Type
 trType t = case t of
@@ -459,8 +469,15 @@ resultOfExpressionTp tp e = case e of
     emitInstructions [LLVM.Pseudo $ "not " ++ show r0]
     return (Left r)
   Jlt.EString s -> do
-    r <- lookupString s
+    sReg <- lookupString s
+    r <- newReg
+    let tp' = stringType s
+        path = [(LLVM.I 32, 0), (LLVM.I 32, 0)]
+    emitInstructions [LLVM.GetElementPtr tp' (LLVM.Pointer tp') sReg path r]
     return (Left r)
+
+stringType :: String -> LLVM.Type
+stringType s = LLVM.Array (length s) (LLVM.I 8)
 
 mulOp
   :: Jlt.MulOp
@@ -512,7 +529,7 @@ trExprTp tp e = case e of
   Jlt.ELitTrue -> pse "true"
   Jlt.ELitFalse{} -> pse "false"
   Jlt.EApp i es -> do
-    ops <- mapM (resultOfExpressionTp tp) es
+    ops <- mapM resultOfExpression es
     call (trType tp) (trName i) ops
   Jlt.EString s -> pse ("str " ++ s)
   Jlt.Neg{} -> pse "neg"

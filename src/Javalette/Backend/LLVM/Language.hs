@@ -9,6 +9,7 @@ module Javalette.Backend.LLVM.Language
   , Constant(..)
   , Decl(..)
   , Def(..)
+  , Arg(..)
   , Blk(..)
   , Label(..)
   , TermInstr(..)
@@ -82,10 +83,15 @@ instance Pretty Decl where
     <> parens (hsepBy (char ',') (map pPrint args))
   pPrintList _lvl xs = vcat (map pPrint xs)
 
+data Arg = Arg Type Reg deriving (Show)
+
+instance Pretty Arg where
+  pPrint (Arg t n) = pPrint t <+> pPrint n
+
 data Def = Def
   { defType :: Type
   , defName :: Name
-  , defArgs :: [Type]
+  , defArgs :: [Arg]
   , defBlks :: [Blk]
   } deriving (Show)
 
@@ -141,7 +147,7 @@ data Instruction
   -- * Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
-  | GETELEMTPTR
+  | GetElementPtr Type Type Name [(Type, Int)] Reg
   | Store Type Operand Type Reg
   -- * Misc.
   | Icmp Comparison Type Operand Operand Reg
@@ -212,7 +218,17 @@ instance Pretty Instruction where
     And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
     Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
     Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
+  -- <result> = getelementptr <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
+    GetElementPtr tp0 tp1 nm args trg ->
+      pPrint trg <+> char '=' <+>
+      text "getelementptr" <+> pPrint tp0 <> char ',' <+> pPrint tp1 <+>
+      pPrint nm <> char ',' <+> printArgs args
     _ -> text "{ugly instruction}"
+
+printArgs :: [(Type, Int)] -> Doc
+printArgs = hsepBy (char ',') . map arg
+  where
+    arg (t, i) = pPrint t <+> int i
 
 instance Pretty TermInstr where
   pPrint i = case i of
