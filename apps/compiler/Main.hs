@@ -4,6 +4,7 @@ import Control.Monad
 import System.IO
 import System.Environment
 import System.Exit
+import System.FilePath
 
 import Javalette.Syntax
 import qualified Javalette.Parser as Parser
@@ -17,7 +18,7 @@ import qualified Javalette.Compiler as Compiler (compile)
 main :: IO ()
 main = do
   inp <- parseInput
-  mapM_ compile inp
+  mapM_ compile (argsFilePaths inp)
 
 handleErrors :: Pretty err => Either err t -> IO t
 handleErrors errOrT = case errOrT of
@@ -33,8 +34,12 @@ handleErrors errOrT = case errOrT of
 -- optparse-applicative)
 -- | Assumes that all argumens are paths to files. Reads the contents of these
 -- files.
-parseInput :: IO [String]
-parseInput = getArgs >>= mapM readFile
+parseInput :: IO Args
+parseInput = Args <$> getArgs
+
+data Args = Args
+  { argsFilePaths :: [FilePath]
+  }
 
 -- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
@@ -45,10 +50,11 @@ instance Pretty CompilerErr where
     TypeErr err'  -> text "TYPE ERROR:" <+> pPrint err'
 
 -- | Parses and typechecks a program.
-compile :: String -> IO ()
-compile s = do
+compile :: FilePath -> IO ()
+compile fp = do
+  s <- readFile fp
   pAnnt <- handleErrors $ parseProgram s >>= typecheck
-  Compiler.compile "/dev/null" pAnnt
+  Compiler.compile (takeBaseName fp) pAnnt
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> Either CompilerErr Prog
