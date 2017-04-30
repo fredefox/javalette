@@ -216,7 +216,7 @@ instance Pretty Instruction where
     FDiv t op0 op1 r -> prettyBinInstr (text "fdiv") t op0 op1 r
     And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
     Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
-    Icmp cmpr t op0 op1 r -> prettyBinInstr (pPrint cmpr) t op0 op1 r
+    Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
     _ -> text "{ugly instruction}"
 
 prettyBinInstr
