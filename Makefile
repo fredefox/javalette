@@ -4,6 +4,8 @@ build:
 	stack build
 	llvm-as-3.8 lib/runtime.ll
 	ln -fs `stack path --project-root`/`stack path --dist-dir`/build/jlc/jlc `stack path --project-root`
+	# TODO We should let stack figure out where data-files are
+	ln -fs `stack path --project-root`/lib/ `stack path --project-root`/`stack path --dist-dir`/build/jlc/
 
 install:
 	stack install
@@ -21,3 +23,11 @@ dist:   report
 test:   build
 	test -s jlctests || { echo "Please see README.md"; exit 1; }
 	make -C jlctests test
+
+PROJECT_ROOT = $(shell stack path --project-root)
+DISTDIR = $(PROJECT_ROOT)/$(shell stack path --dist-dir)
+TARBALL = $(DISTDIR)/$(shell stack list-dependencies | grep javalette | sed  's/ /-/').tar.gz
+
+checkdist:
+	stack sdist
+	jlctests/Grade $(TARBALL) -t jlctests/testsuite
