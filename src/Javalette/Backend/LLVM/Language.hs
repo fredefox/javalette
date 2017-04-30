@@ -189,9 +189,8 @@ instance Pretty Instruction where
   pPrint i = case i of
     Alloca tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
     Load ty0 ty1 regSrc regTrg
-      -> pPrint regTrg <+> char '='
-      <+> pPrint ty0 <+> char ',' <+> pPrint ty1
-      <+> pPrint regSrc
+      -> pPrint regTrg <+> char '=' <+> text "load"
+      <+> pPrint ty0 <> char ',' <+> pPrint ty1 <+> pPrint regSrc
     Store tpOp op tpReg reg
       -> text "store" <+> pPrint tpOp <+> pPrintOp op
       <> char ',' <+> pPrint tpReg <+> pPrint reg
@@ -217,7 +216,7 @@ instance Pretty Instruction where
 
 instance Pretty TermInstr where
   pPrint i = case i of
-    Branch lbl -> text "br label" <+> pPrint lbl
+    Branch lbl -> text "br label" <+> char '%' <> pPrint lbl
     BranchCond cond t f
       -> text "br i1" <+> pPrintOp cond <> char ','
       <+> text "label" <+> char '%' <> pPrint t <> char ','

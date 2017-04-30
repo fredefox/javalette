@@ -399,7 +399,11 @@ resultOfExpressionTp
   :: MonadCompile m
   => Jlt.Type -> Jlt.Expr -> m LLVM.Operand
 resultOfExpressionTp tp e = case e of
-  Jlt.EVar i -> return (Left (trNameToReg i))
+  Jlt.EVar i -> do
+    r <- newReg
+    let tp' = trType tp
+    emitInstructions [LLVM.Load tp' (LLVM.Pointer tp') (trNameToReg i) r]
+    return (Left r)
   Jlt.ELitInt x -> return $ Right (LLVM.ValInt $ fromInteger x)
   Jlt.ELitDoub d -> return $ Right (LLVM.ValDoub d)
   Jlt.ELitTrue -> return $ Right (LLVM.ValInt 0)
