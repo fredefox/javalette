@@ -353,7 +353,7 @@ trArg (Jlt.Argument t _) = trType t
 
 trType :: Jlt.Type -> LLVM.Type
 trType t = case t of
-  Jlt.Int -> LLVM.I 64
+  Jlt.Int -> LLVM.I 32
   Jlt.Doub -> LLVM.Double
   Jlt.Bool -> LLVM.I 1
   Jlt.Void -> LLVM.Void
@@ -510,10 +510,13 @@ trExprTp tp e = case e of
 -- Call Type Name [(Type, Operand)] Reg
 call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
 call t n ops = do
-  r <- newReg
   opTypes <- getArgTypes n
-  emitInstructions
-    [ LLVM.Call t n (zip opTypes ops) r ]
+  let tps = zip opTypes ops
+  case t of
+    LLVM.Void -> emitInstructions [ LLVM.CallVoid t n tps ]
+    _ -> do
+      r <- newReg
+      emitInstructions [ LLVM.Call t n (zip opTypes ops) r ]
 
 trExpr
   :: MonadCompile m

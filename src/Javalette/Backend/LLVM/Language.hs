@@ -142,6 +142,7 @@ data Instruction
   | Icmp Comparison Type Operand Operand Reg
   | FCMP
   | Call Type Name [(Type, Operand)] Reg
+  | CallVoid Type Name [(Type, Operand)]
   | Unreachable
   | Pseudo String
   deriving (Show)
@@ -197,6 +198,8 @@ instance Pretty Instruction where
     Call t n args r
       -> pPrint r <+> char '='
       <+> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)
+    CallVoid t n args
+      -> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)
     Add t op0 op1 r -> prettyBinInstr (text "add") t op0 op1 r
     Sub t op0 op1 r -> prettyBinInstr (text "sub") t op0 op1 r
     Mul t op0 op1 r -> prettyBinInstr (text "mul") t op0 op1 r
