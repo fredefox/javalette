@@ -122,7 +122,7 @@ compileProg = aux . rename
     intToReg = LLVM.Name . (:) 's' . show
     declString :: (String, LLVM.Name) -> LLVM.GlobalVar
     declString (s, r) = LLVM.GlobalVar
-      { LLVM.gvName = r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant s }
+      { LLVM.gvName = r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant (s ++ "\00") }
     trArgType (Jlt.FnDef _ _ args _) = map argType args
     trTopDefName (Jlt.FnDef _ i _ _) = trName i
     unname :: LLVM.Name -> String
@@ -548,8 +548,10 @@ zero t = case t of
   LLVM.Double -> Right (LLVM.ValDoub 0)
   _ -> typeerror "no zero for non-numeric type"
 
+-- The plus one is because we always append "\00" to the string we output which
+-- is actually one character.
 stringType :: String -> LLVM.Type
-stringType s = LLVM.Array (length s) (LLVM.I 8)
+stringType s = LLVM.Array (length s + 1) (LLVM.I 8)
 
 mulOp
   :: Jlt.MulOp
