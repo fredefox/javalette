@@ -181,7 +181,6 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     emitLabel entry
     mapM_ cgArg args
     trBlk fallThrough blk
-    emitLabel fallThrough
   return LLVM.Def
     { LLVM.defType = trType t
     , LLVM.defName = trName i
@@ -256,6 +255,7 @@ trStmt fallThrough s = case s of
     cond e t fallThrough
     emitLabel t
     cont s0
+    emitLabel fallThrough
   Jlt.CondElse e s0 s1 -> do
     t <- newLabel
     f <- newLabel
@@ -264,6 +264,7 @@ trStmt fallThrough s = case s of
     cont s0
     emitLabel f
     cont s1
+    emitLabel fallThrough
   Jlt.While e s0 -> do
     lblCond <- newLabelNamed "whileCond"
     lblBody <- newLabelNamed "whileBody"
@@ -272,7 +273,7 @@ trStmt fallThrough s = case s of
     emitLabel lblBody
     cont s0
     jumpTo lblCond
-    newLabel >>= emitLabel
+    emitLabel fallThrough
   Jlt.SExp e -> void $ resultOfExpression e
   where
     cont = trStmt fallThrough
