@@ -271,12 +271,17 @@ trStmt fallThrough s = case s of
     cond e lblBody fallThrough
     emitLabel lblBody
     cont s0
+    jumpTo lblCond
+    newLabel >>= emitLabel
   Jlt.SExp e -> void $ resultOfExpression e
   where
     cont = trStmt fallThrough
 
 emitInstructions :: MonadWriter [AlmostInstruction]  m => [LLVM.Instruction] -> m ()
 emitInstructions = tell . map Instr
+
+jumpTo :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+jumpTo lbl = emitTerminator (LLVM.Branch lbl)
 
 jumpToNew :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
 jumpToNew lbl = do
