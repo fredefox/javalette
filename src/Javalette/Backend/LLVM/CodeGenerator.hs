@@ -364,11 +364,6 @@ llvmReturn e = do
   let tp = trType (typeof e)
   emitTerminator (LLVM.Return tp op)
 
-showOp :: Show a => Either t a -> String
-showOp op = case op of
-  Right x -> show x
-  Left{} -> "?"
-
 llvmVoidReturn :: MonadCompile m => m ()
 llvmVoidReturn = emitTerminator LLVM.VoidReturn
 
