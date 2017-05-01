@@ -299,9 +299,9 @@ trStmt fallThrough s = case s of
   Jlt.VRet -> llvmVoidReturn
   Jlt.Cond e s0 -> do
     t <- newLabel
-    cond e t fallThrough
-    emitLabel t
     l <- newLabel
+    cond e t l
+    emitLabel t
     trStmt l s0
     jumpToNew l
   Jlt.CondElse e s0 s1 -> do
@@ -505,7 +505,8 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [addOp op (trType tp) r0 r1 r]
+    let tp' = trType tp
+    emitInstructions $ [addOp op tp' r0 r1 r]
     return (Left r)
   Jlt.EAnd e0 e1 -> do
     r0 <- resultOfExpression e0
@@ -523,7 +524,7 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
-    emitInstructions [LLVM.Sub tp' (zero tp') r0 r]
+    emitInstructions [addOp Jlt.Minus tp' (zero tp') r0 r]
     return (Left r)
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
@@ -558,7 +559,7 @@ mulOp op tp = case tp of
   LLVM.I{} -> case op of
     Jlt.Times -> LLVM.Mul tp
     Jlt.Div   -> LLVM.SDiv tp
-    Jlt.Mod   -> LLVM.Rem tp
+    Jlt.Mod   -> LLVM.SRem tp
   LLVM.Double -> case op of
     Jlt.Times -> LLVM.FMul tp
     Jlt.Div   -> LLVM.FDiv tp
@@ -567,13 +568,21 @@ relOp
   :: Jlt.RelOp
   -> LLVM.Type
   -> LLVM.Comparison
-relOp op tp = case op of
-  Jlt.LTH -> LLVM.SLT
-  Jlt.LE  -> LLVM.SLE
-  Jlt.GTH -> LLVM.SGT
-  Jlt.GE  -> LLVM.SGE
-  Jlt.EQU -> case tp of LLVM.I{} -> LLVM.EQ ; LLVM.Double -> LLVM.OEQ
-  Jlt.NE  -> LLVM.NE
+relOp op tp = case tp of
+  LLVM.I{} -> case op of
+    Jlt.LTH -> LLVM.SLT
+    Jlt.LE  -> LLVM.SLE
+    Jlt.GTH -> LLVM.SGT
+    Jlt.GE  -> LLVM.SGE
+    Jlt.EQU -> LLVM.EQ
+    Jlt.NE  -> LLVM.NE
+  LLVM.Double -> case op of
+    Jlt.LTH -> LLVM.OLT
+    Jlt.LE  -> LLVM.OLE
+    Jlt.GTH -> LLVM.OGT
+    Jlt.GE  -> LLVM.OGE
+    Jlt.EQU -> LLVM.OEQ
+    Jlt.NE  -> LLVM.NE
 
 addOp
   :: Jlt.AddOp

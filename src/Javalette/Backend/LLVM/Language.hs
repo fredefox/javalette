@@ -137,7 +137,7 @@ data Instruction
   | Sub Type Operand Operand Reg
   | Mul Type Operand Operand Reg
   | SDiv Type Operand Operand Reg
-  | Rem Type Operand Operand Reg
+  | SRem Type Operand Operand Reg
   -- | Arithmetic operations, doubles
   | FAdd Type Operand Operand Reg
   | FSub Type Operand Operand Reg
@@ -163,7 +163,8 @@ data Instruction
 -- TODO Split up comparisons in those that are integer-based and those that are
 -- not.
 data Comparison
-  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE | OEQ
+  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE
+  | OEQ | OLT | OLE | OGT | OGE
   deriving (Show)
 
 instance Pretty Comparison where
@@ -179,6 +180,10 @@ instance Pretty Comparison where
     SLT -> "slt"
     SLE -> "sle"
     OEQ -> "oeq"
+    OLT -> "olt"
+    OLE -> "ole"
+    OGT -> "ogt"
+    OGE -> "oge"
 
 type Operand = Either Reg Val
 
@@ -215,7 +220,7 @@ instance Pretty Instruction where
     Sub t op0 op1 r -> prettyBinInstr (text "sub") t op0 op1 r
     Mul t op0 op1 r -> prettyBinInstr (text "mul") t op0 op1 r
     SDiv t op0 op1 r -> prettyBinInstr (text "sdiv") t op0 op1 r
-    Rem t op0 op1 r -> prettyBinInstr (text "rem") t op0 op1 r
+    SRem t op0 op1 r -> prettyBinInstr (text "srem") t op0 op1 r
     FAdd t op0 op1 r -> prettyBinInstr (text "fadd") t op0 op1 r
     FSub t op0 op1 r -> prettyBinInstr (text "fsub") t op0 op1 r
     FMul t op0 op1 r -> prettyBinInstr (text "fmul") t op0 op1 r
