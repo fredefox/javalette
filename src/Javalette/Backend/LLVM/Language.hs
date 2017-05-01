@@ -1,8 +1,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds #-}
 module Javalette.Backend.LLVM.Language
+  (
   -- * Syntax
-  ( Prog(..)
+    Prog(..)
   , GlobalVar(..)
   , Name(..)
   , Type(..)
@@ -121,7 +122,7 @@ instance Pretty Label where
   pPrint (Label s) = text s
 
 data TermInstr
-  -- * Terminator instructions
+  -- | Terminator instructions
   = Return Type Operand
   | VoidReturn
   | Branch Label
@@ -130,26 +131,26 @@ data TermInstr
   deriving (Show)
 
 data Instruction
-  -- * Arithmetic operations, integers
+  -- | Arithmetic operations, integers
   = Add Type Operand Operand Reg
   | Sub Type Operand Operand Reg
   | Mul Type Operand Operand Reg
   | SDiv Type Operand Operand Reg
   | Rem Type Operand Operand Reg
-  -- * Arithmetic operations, doubles
+  -- | Arithmetic operations, doubles
   | FAdd Type Operand Operand Reg
   | FSub Type Operand Operand Reg
   | FMul Type Operand Operand Reg
   | FDiv Type Operand Operand Reg
-  -- * Bitwise operators
+  -- | Bitwise operators
   | And Type Operand Operand Reg
   | Or  Type Operand Operand Reg
-  -- * Memory access
+  -- | Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
   | GetElementPtr Type Type Name [(Type, Int)] Reg
   | Store Type Operand Type Reg
-  -- * Misc.
+  -- | Misc.
   | Icmp Comparison Type Operand Operand Reg
   | Fcmp Comparison Type Operand Operand Reg
   | Call Type Name [(Type, Operand)] Reg
