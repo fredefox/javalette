@@ -170,9 +170,6 @@ collectStringsExpr e = case e of
   Jlt.EOr e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
   Jlt.EAnn _ e0 -> collectStringsExpr e0
 
-impossibleRemoved :: a
-impossibleRemoved = error "IMPOSSIBLE - removed by typechecker"
-
 trTopDef :: ReadEnv -> Jlt.TopDef -> Either CompilerErr LLVM.Def
 trTopDef re (Jlt.FnDef t i args blk) = do
   bss <- runCompiler re $ do
@@ -225,8 +222,8 @@ almostToBlks = map (uncurry4 LLVM.Blk . combineLabels) . sepLbls
     sepLbls (l@Label{} : xs) = map go . sepBy isLabel l $ xs
       where
         go (Label l', xs') = (l', xs')
-        go _             = error "IMPOSSIBLE"
-    sepLbls _ = error "IMPOSSIBLE"
+        go _             = impossible "almostToBlks.sepLbkls.go"
+    sepLbls _            = impossible "almostToBlks.sepLbls"
     combineLabels
       :: (LLVM.Label, [AlmostInstruction])
       -> (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.TermInstr])
@@ -357,7 +354,7 @@ assign i e = do
 
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
-typeof _ = error "IMPOSSIBLE - should've been removed by the typechecker"
+typeof _ = typeerror "All expressions should've been annotated by the type-checker."
 
 llvmReturn
   :: MonadCompile m
@@ -414,7 +411,7 @@ defaultValue :: Jlt.Type -> LLVM.Operand
 defaultValue t = case t of
   Jlt.Int -> Right (LLVM.ValInt 0)
   Jlt.Doub -> Right (LLVM.ValDoub 0)
-  _   -> error $ "What's the default value of " ++ show t
+  _   -> impossible "Can only initialize ints and doubles"
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
@@ -439,7 +436,7 @@ trType t = case t of
   Jlt.Doub -> LLVM.Double
   Jlt.Bool -> LLVM.I 1
   Jlt.Void -> LLVM.Void
-  Jlt.String -> error
+  Jlt.String -> impossible
     $  "The string type cannot be translated directly. "
     ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
@@ -554,6 +551,7 @@ zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
   LLVM.I{} -> Right (LLVM.ValInt 0)
   LLVM.Double -> Right (LLVM.ValDoub 0)
+  _ -> typeerror "no zero for non-numeric type"
 
 stringType :: String -> LLVM.Type
 stringType s = LLVM.Array (length s) (LLVM.I 8)
@@ -573,6 +571,8 @@ mulOp op tp = case tp of
   LLVM.Double -> case op of
     Jlt.Times -> LLVM.FMul tp
     Jlt.Div   -> LLVM.FDiv tp
+    Jlt.Mod   -> typeerror "Can't take modulo of double values"
+  _ -> typeerror "No mul-op for this type"
 
 relOp
   :: Jlt.RelOp
@@ -593,6 +593,7 @@ relOp op tp = case tp of
     Jlt.GE  -> LLVM.OGE
     Jlt.EQU -> LLVM.OEQ
     Jlt.NE  -> LLVM.ONE
+  _ ->  typeerror "No rel-op for this type"
 
 addOp
   :: Jlt.AddOp
@@ -608,12 +609,13 @@ addOp op tp = case tp of
   LLVM.Double -> case op of
     Jlt.Plus  -> LLVM.FAdd tp
     Jlt.Minus -> LLVM.FSub tp
+  _ -> typeerror "No add-op for this type"
 
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand
 resultOfExpression e = case e of
   Jlt.EAnn tp e' -> resultOfExpressionTp tp e'
-  _         -> error "IMPOSSIBLE - was removed during type-checking"
+  _         -> impossible "was removed during type-checking"
 
 -- NOTE `r` is only maybe used.
 -- Call Type Name [(Type, Operand)] Reg
@@ -624,3 +626,14 @@ call t n ops r = do
   case t of
     LLVM.Void -> emitInstructions [ LLVM.CallVoid t n tps ]
     _ -> emitInstructions [ LLVM.Call t n tps r ]
+
+-- Various runtime errors
+
+impossible :: String -> a
+impossible = error . ("THE IMPOSSIBLE HAPPENED\n" ++)
+
+typeerror :: String -> a
+typeerror = impossible . ("TYPEERROR " ++)
+
+impossibleRemoved :: a
+impossibleRemoved = typeerror "removed by typechecker"
