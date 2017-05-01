@@ -1,5 +1,6 @@
 module Javalette.Debug
-  ( tracePretty
+  ( module Debug.Trace
+  , tracePretty
   , tracePrettyId
   ) where
 
