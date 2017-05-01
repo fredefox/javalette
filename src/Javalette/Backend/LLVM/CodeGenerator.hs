@@ -452,9 +452,19 @@ builtinDecls =
     , LLVM.declArgs = [LLVM.I 32]
     }
   , LLVM.Decl
+    { LLVM.declType = LLVM.I 32
+    , LLVM.declName = LLVM.Name "readInt"
+    , LLVM.declArgs = []
+    }
+  , LLVM.Decl
     { LLVM.declType = LLVM.Void
     , LLVM.declName = LLVM.Name "printDouble"
     , LLVM.declArgs = [LLVM.Double]
+    }
+  , LLVM.Decl
+    { LLVM.declType = LLVM.Double
+    , LLVM.declName = LLVM.Name "readDouble"
+    , LLVM.declArgs = []
     }
   , LLVM.Decl
     { LLVM.declType = LLVM.Void
