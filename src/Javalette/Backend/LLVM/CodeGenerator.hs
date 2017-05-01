@@ -592,7 +592,7 @@ relOp op tp = case tp of
     Jlt.GTH -> LLVM.OGT
     Jlt.GE  -> LLVM.OGE
     Jlt.EQU -> LLVM.OEQ
-    Jlt.NE  -> LLVM.NE
+    Jlt.NE  -> LLVM.ONE
 
 addOp
   :: Jlt.AddOp

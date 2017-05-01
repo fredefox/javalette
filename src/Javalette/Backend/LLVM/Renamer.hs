@@ -127,7 +127,10 @@ rStmtM s = case s of
 rItemM :: Item -> R Item
 rItemM itm = case itm of
   NoInit i -> NoInit <$> renameIdent i
-  Init i e -> Init <$> renameIdent i <*> rExprM e
+  Init i e -> do
+    e' <- rExprM e
+    i' <- renameIdent i
+    return (Init i' e')
 
 rExprM :: Expr -> R Expr
 rExprM e = case e of

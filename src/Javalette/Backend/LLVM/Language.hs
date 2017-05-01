@@ -164,7 +164,7 @@ data Instruction
 -- not.
 data Comparison
   = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE
-  | OEQ | OLT | OLE | OGT | OGE
+  | OEQ | ONE | OLT | OLE | OGT | OGE
   deriving (Show)
 
 instance Pretty Comparison where
@@ -184,6 +184,7 @@ instance Pretty Comparison where
     OLE -> "ole"
     OGT -> "ogt"
     OGE -> "oge"
+    ONE -> "one"
 
 type Operand = Either Reg Val
 
