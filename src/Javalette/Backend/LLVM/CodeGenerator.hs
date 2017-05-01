@@ -42,7 +42,7 @@ newLabel :: MonadState Env m => m LLVM.Label
 newLabel = LLVM.Label . ('l':) . show <$> incrCounterLabels
 
 newLabelNamed :: MonadCompile m => String -> m LLVM.Label
---newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
+-- newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
 newLabelNamed _ = newLabel
 
 newReg :: MonadCompile m => m LLVM.Reg
@@ -416,8 +416,8 @@ resultOfExpressionTp tp e = case e of
     return (Left r)
   Jlt.ELitInt x -> return $ Right (LLVM.ValInt $ fromInteger x)
   Jlt.ELitDoub d -> return $ Right (LLVM.ValDoub d)
-  Jlt.ELitTrue -> return $ Right (LLVM.ValInt 0)
-  Jlt.ELitFalse -> return $ Right (LLVM.ValInt 1)
+  Jlt.ELitTrue -> return $ Right (LLVM.ValInt 1)
+  Jlt.ELitFalse -> return $ Right (LLVM.ValInt 0)
   Jlt.EAnn tp' e' -> resultOfExpressionTp tp' e'
   Jlt.EApp i es -> do
     es' <- es `forM` \(Jlt.EAnn tp' e') -> resultOfExpressionTp tp' e'
