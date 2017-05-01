@@ -29,6 +29,7 @@ library
                        Javalette.Syntax.SkelJavalette
                        Javalette.Backend.Internals
                        Javalette.Backend.LLVM.Language
+                       Javalette.Debug
   exposed-modules:     Javalette.Syntax
                        Javalette.Interpreter
                        Javalette.Interpreter.Program
