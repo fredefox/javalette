@@ -255,6 +255,7 @@ trStmt fallThrough s = case s of
     cond e t fallThrough
     emitLabel t
     cont s0
+    jumpTo fallThrough
     emitLabel fallThrough
   Jlt.CondElse e s0 s1 -> do
     t <- newLabel
@@ -262,18 +263,22 @@ trStmt fallThrough s = case s of
     cond e t f
     emitLabel t
     cont s0
+    jumpTo fallThrough
     emitLabel f
     cont s1
+    jumpTo fallThrough
     emitLabel fallThrough
   Jlt.While e s0 -> do
     lblCond <- newLabelNamed "whileCond"
     lblBody <- newLabelNamed "whileBody"
+    lblAfterAWhile <- newLabel
     jumpToNew lblCond
-    cond e lblBody fallThrough
+    cond e lblBody lblAfterAWhile
     emitLabel lblBody
     cont s0
+    jumpToNew fallThrough
     jumpTo lblCond
-    emitLabel fallThrough
+    emitLabel lblAfterAWhile
   Jlt.SExp e -> void $ resultOfExpression e
   where
     cont = trStmt fallThrough
