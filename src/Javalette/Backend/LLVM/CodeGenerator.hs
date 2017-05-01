@@ -181,6 +181,7 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     emitLabel entry
     mapM_ cgArg args
     trBlk fallThrough blk
+    emitLabel fallThrough
   return LLVM.Def
     { LLVM.defType = trType t
     , LLVM.defName = trName i
@@ -208,9 +209,54 @@ data AlmostInstruction
   | TermInstr LLVM.TermInstr
   deriving (Show)
 
+isLabel :: AlmostInstruction -> Bool
+isLabel a = case a of Label{} -> True ; _ -> False
+
+isTermInstr :: AlmostInstruction -> Bool
+isTermInstr a = case a of TermInstr{} -> True ; _ -> False
+
+unTermInstr :: AlmostInstruction -> LLVM.TermInstr
+unTermInstr a = case a of TermInstr i -> i ; _ -> undefined
+
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
+almostToBlks = map (uncurry4 LLVM.Blk . combineLabels) . sepLbls
+  where
+    sepLbls :: [AlmostInstruction] -> [(LLVM.Label, [AlmostInstruction])]
+    sepLbls (l@Label{} : xs) = map go . sepBy isLabel l $ xs
+      where
+        go (Label l', xs') = (l', xs')
+        go _             = error "IMPOSSIBLE"
+    sepLbls _ = error "IMPOSSIBLE"
+    combineLabels
+      :: (LLVM.Label, [AlmostInstruction])
+      -> (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.TermInstr])
+    combineLabels (l, as) = (l, a, b, case c of [] -> [] ; _ -> tail c)
+      where
+        (a, b, c) = combineLabels' as
+    combineLabels' :: [AlmostInstruction] -> ([LLVM.Instruction], LLVM.TermInstr, [LLVM.TermInstr])
+    combineLabels' xs = foldl go ([], firstTi, []) xs
+      where
+        go (is, ti, tis) i = case i of
+          Label l -> undefined
+          Instr i -> (is ++ [i], ti, tis)
+          TermInstr i -> (is, ti, tis ++ [LLVM.CommentedT i])
+        firstTi = unTermInstr $ head' (filter isTermInstr xs)
+        head' [] = TermInstr LLVM.Unreachable
+        head' (x:_) = x
+
+uncurry4 f (a, b, c, d) = f a b c d
+
+sepBy :: (a -> Bool) -> a -> [a] -> [(a, [a])]
+sepBy p d = synth . foldl go ((d, []), [])
+  where
+    -- go :: ([a], [(a, [a])]) -> a -> ([a], [(a, [a])])
+    go (prev@(a, as), acc) x = if p x
+      then ((x, [])       , acc ++ [prev])
+      else ((a, as ++ [x]), acc)
+    synth (prev, acc) = acc ++ [prev]
+{-
 almostToBlks [] = []
-almostToBlks (x : xs) = map orderAllocsBlks . synth $ case x of
+almostToBlks (almostPretty -> (x : xs)) = map orderAllocsBlks . synth $ case x of
   Label lbl    -> foldl go (lbl, [], unreachable, []) xs
   Instr{}      -> undefined
   TermInstr{}  -> undefined
@@ -226,6 +272,7 @@ almostToBlks (x : xs) = map orderAllocsBlks . synth $ case x of
     synth (lbl, is, ti, acc) = acc ++ [LLVM.Blk lbl is ti]
     -- NOTE This is actually not needed
     orderAllocsBlks (LLVM.Blk lbl is ti) = LLVM.Blk lbl (orderAllocs is) ti
+-}
 
 orderAllocs :: [LLVM.Instruction] -> [LLVM.Instruction]
 orderAllocs = uncurry (++) . foldl go ([],[])
@@ -254,20 +301,21 @@ trStmt fallThrough s = case s of
     t <- newLabel
     cond e t fallThrough
     emitLabel t
-    cont s0
-    jumpTo fallThrough
-    emitLabel fallThrough
+    l <- newLabel
+    trStmt l s0
+    jumpToNew l
   Jlt.CondElse e s0 s1 -> do
     t <- newLabel
     f <- newLabel
+    l <- newLabel
     cond e t f
     emitLabel t
     cont s0
-    jumpTo fallThrough
+    jumpTo l
     emitLabel f
     cont s1
-    jumpTo fallThrough
-    emitLabel fallThrough
+    jumpTo l
+    emitLabel l
   Jlt.While e s0 -> do
     lblCond <- newLabelNamed "whileCond"
     lblBody <- newLabelNamed "whileBody"
@@ -275,8 +323,7 @@ trStmt fallThrough s = case s of
     jumpToNew lblCond
     cond e lblBody lblAfterAWhile
     emitLabel lblBody
-    cont s0
-    jumpToNew fallThrough
+    trStmt lblCond s0
     jumpTo lblCond
     emitLabel lblAfterAWhile
   Jlt.SExp e -> void $ resultOfExpression e

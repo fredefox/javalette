@@ -111,10 +111,10 @@ instance Pretty Def where
     $$ rbrace
   pPrintList _lvl xs = vcat (map pPrint xs)
 
-data Blk = Blk Label [Instruction] TermInstr deriving (Show)
+data Blk = Blk Label [Instruction] TermInstr [TermInstr] deriving (Show)
 
 instance Pretty Blk where
-  pPrint (Blk lbl is ti) = pPrint lbl <> char ':' <+> vcat (map pPrint is ++ [pPrint ti])
+  pPrint (Blk lbl is ti ti'') = pPrint lbl <> char ':' <+> vcat (map pPrint is ++ [pPrint ti] ++ map pPrint ti'')
 
 data Label = Label String deriving (Show)
 
@@ -128,6 +128,7 @@ data TermInstr
   | Branch Label
   | BranchCond Operand Label Label
   | Unreachable
+  | CommentedT TermInstr
   deriving (Show)
 
 data Instruction
@@ -155,6 +156,8 @@ data Instruction
   | Fcmp Comparison Type Operand Operand Reg
   | Call Type Name [(Type, Operand)] Reg
   | CallVoid Type Name [(Type, Operand)]
+  | Commented Instruction
+  | Comment String
   deriving (Show)
 
 -- TODO Split up comparisons in those that are integer-based and those that are
@@ -226,6 +229,8 @@ instance Pretty Instruction where
       pPrint trg <+> char '=' <+>
       text "getelementptr" <+> pPrint tp0 <> char ',' <+> pPrint tp1 <+>
       pPrint nm <> char ',' <+> printArgs args
+    Commented i' -> char ';' <+> pPrint i'
+    Comment s -> char ';' <+> text s
 
 printArgs :: [(Type, Int)] -> Doc
 printArgs = hsepBy (char ',') . map arg
@@ -242,6 +247,7 @@ instance Pretty TermInstr where
     Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
     VoidReturn -> text "ret void"
     Unreachable -> text "unreachable"
+    CommentedT i' -> char ';' <+> pPrint i'
 
 prettyBinInstr
   :: Doc -> Type -> Operand -> Operand -> Reg -> Doc
