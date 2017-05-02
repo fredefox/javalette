@@ -197,9 +197,6 @@ trBlk
   => LLVM.Label -> Jlt.Blk -> m ()
 trBlk fallthrough (Jlt.Block stmts) = mapM_ (trStmt fallthrough) stmts
 
-unreachable :: LLVM.TermInstr
-unreachable = LLVM.Unreachable
-
 data AlmostInstruction
   = Label LLVM.Label
   | Instr LLVM.Instruction
