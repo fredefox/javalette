@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ViewPatterns #-}
 module Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
@@ -18,7 +17,7 @@ import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
 
-data CompilerErr = Generic String deriving (Show)
+newtype CompilerErr = Generic String deriving (Show)
 data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.

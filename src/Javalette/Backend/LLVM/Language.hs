@@ -44,7 +44,7 @@ instance Pretty GlobalVar where
     = pPrint nm <+> char '=' <+> text "global" <+> pPrint tp <+> pPrint val
   pPrintList _lvl xs = vcat (map pPrint xs)
 
-data Name = Name String deriving (Show)
+newtype Name = Name String deriving (Show)
 
 instance Pretty Name where
   pPrint (Name s) = char '@' <> text s
@@ -68,7 +68,7 @@ instance Pretty Type where
     Pointer t0 -> pPrint t0 <> char '*'
     Array n t' -> brackets (int n <+> char 'x' <+> pPrint t')
 
-data Constant = Constant String deriving (Show)
+newtype Constant = Constant String deriving (Show)
 
 instance Pretty Constant where
   pPrint (Constant s) = char 'c' <> doubleQuotes (text s)
@@ -116,7 +116,7 @@ data Blk = Blk Label [Instruction] TermInstr [TermInstr] deriving (Show)
 instance Pretty Blk where
   pPrint (Blk lbl is ti ti'') = pPrint lbl <> char ':' <+> vcat (map pPrint is ++ [pPrint ti] ++ map pPrint ti'')
 
-data Label = Label String deriving (Show)
+newtype Label = Label String deriving (Show)
 
 instance Pretty Label where
   pPrint (Label s) = text s
@@ -199,7 +199,7 @@ instance Pretty Val where
     ValInt i -> int i
     ValDoub d -> double d
 
-data Reg = Reg String deriving (Show)
+newtype Reg = Reg String deriving (Show)
 
 instance Pretty Reg where
   pPrint (Reg n) = char '%' <> text n

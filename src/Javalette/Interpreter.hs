@@ -70,7 +70,7 @@ wiredInDefs = M.fromList
     i |-> def = (AST.Ident i, DefWiredin def)
 
 
-data InterpreterError
+newtype InterpreterError
   = Generic String
 
 instance Pretty InterpreterError where

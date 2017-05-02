@@ -5,7 +5,7 @@ module Javalette.Backend.Internals
 
 import Javalette.Syntax as AST
 
-data Backend = Backend
+newtype Backend = Backend
   { compiler :: FilePath -> AST.Prog -> IO ()
   }
 

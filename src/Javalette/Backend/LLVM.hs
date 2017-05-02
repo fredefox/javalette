@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ViewPatterns #-}
 module Javalette.Backend.LLVM
   ( backend
   ) where
