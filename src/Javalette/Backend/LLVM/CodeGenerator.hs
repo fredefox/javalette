@@ -234,14 +234,15 @@ almostToBlks = map (uncurry4 LLVM.Blk . combineLabels) . sepLbls
     combineLabels' xs = foldl go ([], firstTi, []) xs
       where
         go (is, ti, tis) i = case i of
-          Label l -> undefined
-          Instr i -> (is ++ [i], ti, tis)
-          TermInstr i -> (is, ti, tis ++ [LLVM.CommentedT i])
+          Label{} -> undefined
+          Instr i' -> (is ++ [i'], ti, tis)
+          TermInstr i' -> (is, ti, tis ++ [LLVM.CommentedT i'])
         firstTi = unTermInstr $ head' (filter isTermInstr xs)
         head' [] = TermInstr LLVM.Unreachable
         head' (x:_) = x
 
-uncurry4 f (a, b, c, d) = f a b c d
+uncurry4 :: (g -> r -> e -> a -> t) -> (g, r, e, a) -> t
+uncurry4 g (r, e, a, t) = g r e a t
 
 sepBy :: (a -> Bool) -> a -> [a] -> [(a, [a])]
 sepBy p d = synth . foldl go ((d, []), [])
@@ -251,32 +252,6 @@ sepBy p d = synth . foldl go ((d, []), [])
       then ((x, [])       , acc ++ [prev])
       else ((a, as ++ [x]), acc)
     synth (prev, acc) = acc ++ [prev]
-{-
-almostToBlks [] = []
-almostToBlks (almostPretty -> (x : xs)) = map orderAllocsBlks . synth $ case x of
-  Label lbl    -> foldl go (lbl, [], unreachable, []) xs
-  Instr{}      -> undefined
-  TermInstr{}  -> undefined
-  where
-    go
-      :: (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.Blk])
-      -> AlmostInstruction
-      -> (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.Blk])
-    go tt@(lbl, prev, ti, acc) curr = case curr of
-      Label lbl'    -> (lbl', []         , unreachable, acc ++ [LLVM.Blk lbl prev ti])
-      Instr i       -> (lbl , prev ++ [i], ti         , acc)
-      TermInstr ti' -> (lbl , prev       , ti'        , acc)
-    synth (lbl, is, ti, acc) = acc ++ [LLVM.Blk lbl is ti]
-    -- NOTE This is actually not needed
-    orderAllocsBlks (LLVM.Blk lbl is ti) = LLVM.Blk lbl (orderAllocs is) ti
--}
-
-orderAllocs :: [LLVM.Instruction] -> [LLVM.Instruction]
-orderAllocs = uncurry (++) . foldl go ([],[])
-  where
-    go (allocs, nonallocs) i = case i of
-      LLVM.Alloca{} -> (allocs ++ [i], nonallocs)
-      _             -> (allocs, nonallocs ++ [i])
 
 -- "Type synonyms cannot be partially-applied"
 -- From: http://stackoverflow.com/a/9289928/1021134
@@ -502,6 +477,7 @@ resultOfExpressionTp tp e = case e of
         i   = case tp' of
           LLVM.I{} -> LLVM.Icmp
           LLVM.Double -> LLVM.Fcmp
+          _ -> typeerror "Expected numerical type"
     emitInstructions [i (relOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EMul e0 op e1 -> do
@@ -515,23 +491,8 @@ resultOfExpressionTp tp e = case e of
     r1 <- resultOfExpression e1
     r <- newReg
     let tp' = trType tp
-    emitInstructions $ [addOp op tp' r0 r1 r]
+    emitInstructions [addOp op tp' r0 r1 r]
     return (Left r)
-{-
-  Jlt.CondElse e s0 s1 -> do
-    t <- newLabel
-    f <- newLabel
-    l <- newLabel
-    cond e t f
-    emitLabel t
-    cont s0
-    jumpTo l
-    emitLabel f
-    cont s1
-    jumpTo l
-    emitLabel l
--}
-
   Jlt.EAnd e0 e1 -> do
     t <- newLabel
     f <- newLabel
