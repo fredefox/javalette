@@ -1,8 +1,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds #-}
 module Javalette.Backend.LLVM.Language
+  (
   -- * Syntax
-  ( Prog(..)
+    Prog(..)
   , GlobalVar(..)
   , Name(..)
   , Type(..)
@@ -110,10 +111,10 @@ instance Pretty Def where
     $$ rbrace
   pPrintList _lvl xs = vcat (map pPrint xs)
 
-data Blk = Blk Label [Instruction] TermInstr deriving (Show)
+data Blk = Blk Label [Instruction] TermInstr [TermInstr] deriving (Show)
 
 instance Pretty Blk where
-  pPrint (Blk lbl is ti) = pPrint lbl <> char ':' <+> vcat (map pPrint is ++ [pPrint ti])
+  pPrint (Blk lbl is ti ti'') = pPrint lbl <> char ':' <+> vcat (map pPrint is ++ [pPrint ti] ++ map pPrint ti'')
 
 data Label = Label String deriving (Show)
 
@@ -121,45 +122,50 @@ instance Pretty Label where
   pPrint (Label s) = text s
 
 data TermInstr
-  -- * Terminator instructions
+  -- | Terminator instructions
   = Return Type Operand
   | VoidReturn
   | Branch Label
   | BranchCond Operand Label Label
   | Unreachable
+  | CommentedT TermInstr
   deriving (Show)
 
 data Instruction
-  -- * Arithmetic operations, integers
+  -- | Arithmetic operations, integers
   = Add Type Operand Operand Reg
   | Sub Type Operand Operand Reg
   | Mul Type Operand Operand Reg
   | SDiv Type Operand Operand Reg
-  | Rem Type Operand Operand Reg
-  -- * Arithmetic operations, doubles
+  | SRem Type Operand Operand Reg
+  -- | Arithmetic operations, doubles
   | FAdd Type Operand Operand Reg
   | FSub Type Operand Operand Reg
   | FMul Type Operand Operand Reg
   | FDiv Type Operand Operand Reg
-  -- * Bitwise operators
+  -- | Bitwise operators
   | And Type Operand Operand Reg
   | Or  Type Operand Operand Reg
-  -- * Memory access
+  | Xor Type Operand Operand Reg
+  -- | Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
   | GetElementPtr Type Type Name [(Type, Int)] Reg
   | Store Type Operand Type Reg
-  -- * Misc.
+  -- | Misc.
   | Icmp Comparison Type Operand Operand Reg
   | Fcmp Comparison Type Operand Operand Reg
   | Call Type Name [(Type, Operand)] Reg
   | CallVoid Type Name [(Type, Operand)]
+  | Commented Instruction
+  | Comment String
   deriving (Show)
 
 -- TODO Split up comparisons in those that are integer-based and those that are
 -- not.
 data Comparison
-  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE | OEQ
+  = EQ | NE | UGT | UGE | ULT | ULE | SGT | SGE | SLT | SLE
+  | OEQ | ONE | OLT | OLE | OGT | OGE
   deriving (Show)
 
 instance Pretty Comparison where
@@ -175,6 +181,11 @@ instance Pretty Comparison where
     SLT -> "slt"
     SLE -> "sle"
     OEQ -> "oeq"
+    OLT -> "olt"
+    OLE -> "ole"
+    OGT -> "ogt"
+    OGE -> "oge"
+    ONE -> "one"
 
 type Operand = Either Reg Val
 
@@ -211,13 +222,14 @@ instance Pretty Instruction where
     Sub t op0 op1 r -> prettyBinInstr (text "sub") t op0 op1 r
     Mul t op0 op1 r -> prettyBinInstr (text "mul") t op0 op1 r
     SDiv t op0 op1 r -> prettyBinInstr (text "sdiv") t op0 op1 r
-    Rem t op0 op1 r -> prettyBinInstr (text "rem") t op0 op1 r
+    SRem t op0 op1 r -> prettyBinInstr (text "srem") t op0 op1 r
     FAdd t op0 op1 r -> prettyBinInstr (text "fadd") t op0 op1 r
     FSub t op0 op1 r -> prettyBinInstr (text "fsub") t op0 op1 r
     FMul t op0 op1 r -> prettyBinInstr (text "fmul") t op0 op1 r
     FDiv t op0 op1 r -> prettyBinInstr (text "fdiv") t op0 op1 r
     And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
     Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
+    Xor t op0 op1 r -> prettyBinInstr (text "xor") t op0 op1 r
     Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
     Fcmp cmpr t op0 op1 r -> prettyBinInstr (text "fcmp" <+> pPrint cmpr) t op0 op1 r
   -- <result> = getelementptr <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
@@ -225,6 +237,8 @@ instance Pretty Instruction where
       pPrint trg <+> char '=' <+>
       text "getelementptr" <+> pPrint tp0 <> char ',' <+> pPrint tp1 <+>
       pPrint nm <> char ',' <+> printArgs args
+    Commented i' -> char ';' <+> pPrint i'
+    Comment s -> char ';' <+> text s
 
 printArgs :: [(Type, Int)] -> Doc
 printArgs = hsepBy (char ',') . map arg
@@ -241,6 +255,7 @@ instance Pretty TermInstr where
     Return tp op -> text "ret" <+> pPrint tp <+> pPrintOp op
     VoidReturn -> text "ret void"
     Unreachable -> text "unreachable"
+    CommentedT i' -> char ';' <+> pPrint i'
 
 prettyBinInstr
   :: Doc -> Type -> Operand -> Operand -> Reg -> Doc

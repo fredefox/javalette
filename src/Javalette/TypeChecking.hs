@@ -199,7 +199,18 @@ instance TypeCheck TopDef where
     _ <- newScope
     _ <- addArgs args
     blk' <- typecheckBlk t blk
-    return (FnDef t i args blk')
+    let blk'' = case t of Void -> implicitReturn blk' ; _ -> blk'
+    return (FnDef t i args blk'')
+
+implicitReturn :: Blk -> Blk
+implicitReturn (Block stmts) = Block $ case safeLast stmts of
+  Nothing -> [VRet]
+  Just x -> case x of VRet -> stmts ; _ -> stmts ++ [VRet]
+
+safeLast :: [a] -> Maybe a
+safeLast [] = Nothing
+safeLast [x] = Just x
+safeLast (_ : xs) = safeLast xs
 
 -- I don't like that type-checking does not have the same interface for all
 -- parts of the language. A solution to this would be to expand state to also

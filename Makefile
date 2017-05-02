@@ -21,8 +21,8 @@ dist:   report
 
 .PHONY: test
 test:   build
-	test -s jlctests || { echo "Please see README.md"; exit 1; }
-	make -C jlctests test
+	test -s test || { echo "Please see README.md"; exit 1; }
+	make -C test test
 
 PROJECT_ROOT = $(shell stack path --project-root)
 DISTDIR = $(PROJECT_ROOT)/$(shell stack path --dist-dir)
@@ -30,4 +30,4 @@ TARBALL = $(DISTDIR)/$(shell stack list-dependencies | grep javalette | sed  's/
 
 checkdist:
 	stack sdist
-	jlctests/Grade $(TARBALL) -t jlctests/testsuite
+	test/Grade $(TARBALL) -t test/testsuite

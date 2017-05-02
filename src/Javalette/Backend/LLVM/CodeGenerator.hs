@@ -42,7 +42,7 @@ newLabel :: MonadState Env m => m LLVM.Label
 newLabel = LLVM.Label . ('l':) . show <$> incrCounterLabels
 
 newLabelNamed :: MonadCompile m => String -> m LLVM.Label
---newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
+-- newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
 newLabelNamed _ = newLabel
 
 newReg :: MonadCompile m => m LLVM.Reg
@@ -122,7 +122,7 @@ compileProg = aux . rename
     intToReg = LLVM.Name . (:) 's' . show
     declString :: (String, LLVM.Name) -> LLVM.GlobalVar
     declString (s, r) = LLVM.GlobalVar
-      { LLVM.gvName = r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant s }
+      { LLVM.gvName = r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant (s ++ "\00") }
     trArgType (Jlt.FnDef _ _ args _) = map argType args
     trTopDefName (Jlt.FnDef _ i _ _) = trName i
     unname :: LLVM.Name -> String
@@ -170,9 +170,6 @@ collectStringsExpr e = case e of
   Jlt.EOr e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
   Jlt.EAnn _ e0 -> collectStringsExpr e0
 
-impossibleRemoved :: a
-impossibleRemoved = error "IMPOSSIBLE - removed by typechecker"
-
 trTopDef :: ReadEnv -> Jlt.TopDef -> Either CompilerErr LLVM.Def
 trTopDef re (Jlt.FnDef t i args blk) = do
   bss <- runCompiler re $ do
@@ -209,31 +206,52 @@ data AlmostInstruction
   | TermInstr LLVM.TermInstr
   deriving (Show)
 
-almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
-almostToBlks [] = []
-almostToBlks (x : xs) = map orderAllocsBlks . synth $ case x of
-  Label lbl    -> foldl go (lbl, [], unreachable, []) xs
-  Instr{}      -> undefined
-  TermInstr{}  -> undefined
-  where
-    go
-      :: (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.Blk])
-      -> AlmostInstruction
-      -> (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.Blk])
-    go tt@(lbl, prev, ti, acc) curr = case curr of
-      Label lbl'    -> (lbl', []         , unreachable, acc ++ [LLVM.Blk lbl prev ti])
-      Instr i       -> (lbl , prev ++ [i], ti         , acc)
-      TermInstr ti' -> (lbl , prev       , ti'        , acc)
-    synth (lbl, is, ti, acc) = acc ++ [LLVM.Blk lbl is ti]
-    -- NOTE This is actually not needed
-    orderAllocsBlks (LLVM.Blk lbl is ti) = LLVM.Blk lbl (orderAllocs is) ti
+isLabel :: AlmostInstruction -> Bool
+isLabel a = case a of Label{} -> True ; _ -> False
 
-orderAllocs :: [LLVM.Instruction] -> [LLVM.Instruction]
-orderAllocs = uncurry (++) . foldl go ([],[])
+isTermInstr :: AlmostInstruction -> Bool
+isTermInstr a = case a of TermInstr{} -> True ; _ -> False
+
+unTermInstr :: AlmostInstruction -> LLVM.TermInstr
+unTermInstr a = case a of TermInstr i -> i ; _ -> undefined
+
+almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
+almostToBlks = map (uncurry4 LLVM.Blk . combineLabels) . sepLbls
   where
-    go (allocs, nonallocs) i = case i of
-      LLVM.Alloca{} -> (allocs ++ [i], nonallocs)
-      _             -> (allocs, nonallocs ++ [i])
+    sepLbls :: [AlmostInstruction] -> [(LLVM.Label, [AlmostInstruction])]
+    sepLbls (l@Label{} : xs) = map go . sepBy isLabel l $ xs
+      where
+        go (Label l', xs') = (l', xs')
+        go _             = impossible "almostToBlks.sepLbkls.go"
+    sepLbls _            = impossible "almostToBlks.sepLbls"
+    combineLabels
+      :: (LLVM.Label, [AlmostInstruction])
+      -> (LLVM.Label, [LLVM.Instruction], LLVM.TermInstr, [LLVM.TermInstr])
+    combineLabels (l, as) = (l, a, b, case c of [] -> [] ; _ -> tail c)
+      where
+        (a, b, c) = combineLabels' as
+    combineLabels' :: [AlmostInstruction] -> ([LLVM.Instruction], LLVM.TermInstr, [LLVM.TermInstr])
+    combineLabels' xs = foldl go ([], firstTi, []) xs
+      where
+        go (is, ti, tis) i = case i of
+          Label{} -> undefined
+          Instr i' -> (is ++ [i'], ti, tis)
+          TermInstr i' -> (is, ti, tis ++ [LLVM.CommentedT i'])
+        firstTi = unTermInstr $ head' (filter isTermInstr xs)
+        head' [] = TermInstr LLVM.Unreachable
+        head' (x:_) = x
+
+uncurry4 :: (g -> r -> e -> a -> t) -> (g, r, e, a) -> t
+uncurry4 g (r, e, a, t) = g r e a t
+
+sepBy :: (a -> Bool) -> a -> [a] -> [(a, [a])]
+sepBy p d = synth . foldl go ((d, []), [])
+  where
+    -- go :: ([a], [(a, [a])]) -> a -> ([a], [(a, [a])])
+    go (prev@(a, as), acc) x = if p x
+      then ((x, [])       , acc ++ [prev])
+      else ((a, as ++ [x]), acc)
+    synth (prev, acc) = acc ++ [prev]
 
 -- "Type synonyms cannot be partially-applied"
 -- From: http://stackoverflow.com/a/9289928/1021134
@@ -253,30 +271,42 @@ trStmt fallThrough s = case s of
   Jlt.VRet -> llvmVoidReturn
   Jlt.Cond e s0 -> do
     t <- newLabel
-    cond e t fallThrough
+    l <- newLabel
+    cond e t l
     emitLabel t
-    cont s0
+    trStmt l s0
+    jumpToNew l
   Jlt.CondElse e s0 s1 -> do
     t <- newLabel
     f <- newLabel
+    l <- newLabel
     cond e t f
     emitLabel t
     cont s0
+    jumpTo l
     emitLabel f
     cont s1
+    jumpTo l
+    emitLabel l
   Jlt.While e s0 -> do
     lblCond <- newLabelNamed "whileCond"
     lblBody <- newLabelNamed "whileBody"
+    lblAfterAWhile <- newLabel
     jumpToNew lblCond
-    cond e lblBody fallThrough
+    cond e lblBody lblAfterAWhile
     emitLabel lblBody
-    cont s0
+    trStmt lblCond s0
+    jumpTo lblCond
+    emitLabel lblAfterAWhile
   Jlt.SExp e -> void $ resultOfExpression e
   where
     cont = trStmt fallThrough
 
 emitInstructions :: MonadWriter [AlmostInstruction]  m => [LLVM.Instruction] -> m ()
 emitInstructions = tell . map Instr
+
+jumpTo :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+jumpTo lbl = emitTerminator (LLVM.Branch lbl)
 
 jumpToNew :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
 jumpToNew lbl = do
@@ -299,7 +329,7 @@ assign i e = do
 
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
-typeof _ = error "IMPOSSIBLE - should've been removed by the typechecker"
+typeof _ = typeerror "All expressions should've been annotated by the type-checker."
 
 llvmReturn
   :: MonadCompile m
@@ -308,11 +338,6 @@ llvmReturn e = do
   op <- resultOfExpression e
   let tp = trType (typeof e)
   emitTerminator (LLVM.Return tp op)
-
-showOp :: Show a => Either t a -> String
-showOp op = case op of
-  Right x -> show x
-  Left{} -> "?"
 
 llvmVoidReturn :: MonadCompile m => m ()
 llvmVoidReturn = emitTerminator LLVM.VoidReturn
@@ -349,6 +374,13 @@ varInit tp reg op = emitInstructions
   [ LLVM.Alloca tp reg
   , LLVM.Store tp op (LLVM.Pointer tp) reg
   ]
+
+allocNew :: MonadCompile m => LLVM.Type -> m LLVM.Reg
+allocNew tp = do
+  r <- newReg
+  emitInstructions [LLVM.Alloca tp r]
+  return r
+
 trIdent :: Jlt.Ident -> LLVM.Reg
 trIdent (Jlt.Ident s) = LLVM.Reg s
 
@@ -356,7 +388,7 @@ defaultValue :: Jlt.Type -> LLVM.Operand
 defaultValue t = case t of
   Jlt.Int -> Right (LLVM.ValInt 0)
   Jlt.Doub -> Right (LLVM.ValDoub 0)
-  _   -> error $ "What's the default value of " ++ show t
+  _   -> impossible "Can only initialize ints and doubles"
 
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
@@ -381,7 +413,7 @@ trType t = case t of
   Jlt.Doub -> LLVM.Double
   Jlt.Bool -> LLVM.I 1
   Jlt.Void -> LLVM.Void
-  Jlt.String -> error
+  Jlt.String -> impossible
     $  "The string type cannot be translated directly. "
     ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
@@ -394,9 +426,19 @@ builtinDecls =
     , LLVM.declArgs = [LLVM.I 32]
     }
   , LLVM.Decl
+    { LLVM.declType = LLVM.I 32
+    , LLVM.declName = LLVM.Name "readInt"
+    , LLVM.declArgs = []
+    }
+  , LLVM.Decl
     { LLVM.declType = LLVM.Void
     , LLVM.declName = LLVM.Name "printDouble"
     , LLVM.declArgs = [LLVM.Double]
+    }
+  , LLVM.Decl
+    { LLVM.declType = LLVM.Double
+    , LLVM.declName = LLVM.Name "readDouble"
+    , LLVM.declArgs = []
     }
   , LLVM.Decl
     { LLVM.declType = LLVM.Void
@@ -416,8 +458,8 @@ resultOfExpressionTp tp e = case e of
     return (Left r)
   Jlt.ELitInt x -> return $ Right (LLVM.ValInt $ fromInteger x)
   Jlt.ELitDoub d -> return $ Right (LLVM.ValDoub d)
-  Jlt.ELitTrue -> return $ Right (LLVM.ValInt 0)
-  Jlt.ELitFalse -> return $ Right (LLVM.ValInt 1)
+  Jlt.ELitTrue -> return $ Right (LLVM.ValInt 1)
+  Jlt.ELitFalse -> return $ Right (LLVM.ValInt 0)
   Jlt.EAnn tp' e' -> resultOfExpressionTp tp' e'
   Jlt.EApp i es -> do
     es' <- es `forM` \(Jlt.EAnn tp' e') -> resultOfExpressionTp tp' e'
@@ -435,6 +477,7 @@ resultOfExpressionTp tp e = case e of
         i   = case tp' of
           LLVM.I{} -> LLVM.Icmp
           LLVM.Double -> LLVM.Fcmp
+          _ -> typeerror "Expected numerical type"
     emitInstructions [i (relOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EMul e0 op e1 -> do
@@ -447,31 +490,65 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [addOp op (trType tp) r0 r1 r]
+    let tp' = trType tp
+    emitInstructions [addOp op tp' r0 r1 r]
     return (Left r)
   Jlt.EAnd e0 e1 -> do
-    r0 <- resultOfExpression e0
+    t <- newLabel
+    f <- newLabel
+    l <- newLabel
+    let tp' = LLVM.I 1
+    res <- allocNew tp'
+    cond e0 t f
+    emitLabel t
     r1 <- resultOfExpression e1
+    emitInstructions
+      [ LLVM.Store tp' r1 (LLVM.Pointer tp') res
+      ]
     r <- newReg
-    emitInstructions [LLVM.And (trType tp) r0 r1 r]
+    jumpTo l
+    emitLabel f
+    emitInstructions
+      [ LLVM.Store tp' (Right (LLVM.ValInt 0)) (LLVM.Pointer tp') res
+      ]
+    jumpTo l
+    emitLabel l
+    emitInstructions [LLVM.Load tp' (LLVM.Pointer tp') res r]
     return (Left r)
   Jlt.EOr e0 e1 -> do
-    r0 <- resultOfExpression e0
+    t <- newLabel
+    f <- newLabel
+    l <- newLabel
+    let tp' = LLVM.I 1
+    res <- allocNew tp'
+    cond e0 t f
+    emitLabel f
     r1 <- resultOfExpression e1
+    emitInstructions
+      [ LLVM.Store tp' r1 (LLVM.Pointer tp') res
+      ]
     r <- newReg
-    emitInstructions [LLVM.Or (trType tp) r0 r1 r]
+    jumpTo l
+    emitLabel t
+    emitInstructions
+      [ LLVM.Store tp' (Right (LLVM.ValInt 1)) (LLVM.Pointer tp') res
+      ]
+    jumpTo l
+    emitLabel l
+    emitInstructions [LLVM.Load tp' (LLVM.Pointer tp') res r]
     return (Left r)
   Jlt.Neg e0 -> do
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
-    emitInstructions [LLVM.Sub tp' (zero tp') r0 r]
+    emitInstructions [addOp Jlt.Minus tp' (zero tp') r0 r]
     return (Left r)
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
-    emitInstructions [LLVM.Sub tp' (zero tp' ) r0 r]
+        llvmTrue = LLVM.ValInt 1
+    emitInstructions [LLVM.Xor tp' r0 (Right llvmTrue) r]
     return (Left r)
   Jlt.EString s -> do
     sReg <- lookupString s
@@ -485,9 +562,12 @@ zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
   LLVM.I{} -> Right (LLVM.ValInt 0)
   LLVM.Double -> Right (LLVM.ValDoub 0)
+  _ -> typeerror "no zero for non-numeric type"
 
+-- The plus one is because we always append "\00" to the string we output which
+-- is actually one character.
 stringType :: String -> LLVM.Type
-stringType s = LLVM.Array (length s) (LLVM.I 8)
+stringType s = LLVM.Array (length s + 1) (LLVM.I 8)
 
 mulOp
   :: Jlt.MulOp
@@ -500,22 +580,33 @@ mulOp op tp = case tp of
   LLVM.I{} -> case op of
     Jlt.Times -> LLVM.Mul tp
     Jlt.Div   -> LLVM.SDiv tp
-    Jlt.Mod   -> LLVM.Rem tp
+    Jlt.Mod   -> LLVM.SRem tp
   LLVM.Double -> case op of
     Jlt.Times -> LLVM.FMul tp
     Jlt.Div   -> LLVM.FDiv tp
+    Jlt.Mod   -> typeerror "Can't take modulo of double values"
+  _ -> typeerror "No mul-op for this type"
 
 relOp
   :: Jlt.RelOp
   -> LLVM.Type
   -> LLVM.Comparison
-relOp op tp = case op of
-  Jlt.LTH -> LLVM.SLT
-  Jlt.LE  -> LLVM.SLE
-  Jlt.GTH -> LLVM.SGT
-  Jlt.GE  -> LLVM.SGE
-  Jlt.EQU -> case tp of LLVM.I{} -> LLVM.EQ ; LLVM.Double -> LLVM.OEQ
-  Jlt.NE  -> LLVM.NE
+relOp op tp = case tp of
+  LLVM.I{} -> case op of
+    Jlt.LTH -> LLVM.SLT
+    Jlt.LE  -> LLVM.SLE
+    Jlt.GTH -> LLVM.SGT
+    Jlt.GE  -> LLVM.SGE
+    Jlt.EQU -> LLVM.EQ
+    Jlt.NE  -> LLVM.NE
+  LLVM.Double -> case op of
+    Jlt.LTH -> LLVM.OLT
+    Jlt.LE  -> LLVM.OLE
+    Jlt.GTH -> LLVM.OGT
+    Jlt.GE  -> LLVM.OGE
+    Jlt.EQU -> LLVM.OEQ
+    Jlt.NE  -> LLVM.ONE
+  _ ->  typeerror "No rel-op for this type"
 
 addOp
   :: Jlt.AddOp
@@ -531,12 +622,13 @@ addOp op tp = case tp of
   LLVM.Double -> case op of
     Jlt.Plus  -> LLVM.FAdd tp
     Jlt.Minus -> LLVM.FSub tp
+  _ -> typeerror "No add-op for this type"
 
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand
 resultOfExpression e = case e of
   Jlt.EAnn tp e' -> resultOfExpressionTp tp e'
-  _         -> error "IMPOSSIBLE - was removed during type-checking"
+  _         -> impossible "was removed during type-checking"
 
 -- NOTE `r` is only maybe used.
 -- Call Type Name [(Type, Operand)] Reg
@@ -547,3 +639,14 @@ call t n ops r = do
   case t of
     LLVM.Void -> emitInstructions [ LLVM.CallVoid t n tps ]
     _ -> emitInstructions [ LLVM.Call t n tps r ]
+
+-- Various runtime errors
+
+impossible :: String -> a
+impossible = error . ("THE IMPOSSIBLE HAPPENED\n" ++)
+
+typeerror :: String -> a
+typeerror = impossible . ("TYPEERROR " ++)
+
+impossibleRemoved :: a
+impossibleRemoved = typeerror "removed by typechecker"
