@@ -30,3 +30,8 @@ test:   build
 
 checkdist: dist
 	test/Grade $(TARBALL) -t test/testsuite
+
+# Note, requires hlint post (fa0a76a412) as of this writing it haven't
+# been merged into the official repo.
+lint:
+	hlint src --ignore-regex="src/Javalette/Syntax|src/Javalette/Parser/Main.hs"
