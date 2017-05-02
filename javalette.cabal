@@ -1,5 +1,5 @@
 name:                javalette
-version:             0.2.3.0
+version:             0.3.0.0
 synopsis:            A compiler for Javalette
 description:         The documentation is avaiable here:
                      <http://www.cse.chalmers.se/edu/course/TDA283/project/>.
@@ -17,6 +17,7 @@ extra-source-files:  README.md
                      src/Makefile
                      stack.yaml
                      Javalette.cf
+                     lib/runtime.ll
 cabal-version:       >=1.10
 
 library

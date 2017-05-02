@@ -1,33 +1,32 @@
 all: build
 
+PROJECT_ROOT = $(shell stack path --project-root)
+LIB_DIR      = $(PROJECT_ROOT)/lib
+DIST_DIR     = $(PROJECT_ROOT)/$(shell stack path --dist-dir)
+JLC_DIR      = $(DIST_DIR)/build/jlc
+JLC_EXE      = $(JLC_DIR)/jlc
+TARBALL      = $(DIST_DIR)/$(shell stack list-dependencies | grep javalette | sed  's/ /-/').tar.gz
+
 build:
 	stack build
-	llvm-as-3.8 lib/runtime.ll
-	ln -fs `stack path --project-root`/`stack path --dist-dir`/build/jlc/jlc `stack path --project-root`
+	llvm-as-3.8 $(LIB_DIR)/*.ll
+	ln -fs $(JLC_EXE) $(PROJECT_ROOT)
 	# TODO We should let stack figure out where data-files are
-	ln -fs `stack path --project-root`/lib/ `stack path --project-root`/`stack path --dist-dir`/build/jlc/
+	ln -fs $(LIB_DIR) $(JLC_DIR)
 
 install:
 	stack install
 
-report: README.md
-	pandoc README.md -o report.pdf \
-	  --latex-engine=xelatex \
-	  --variable urlcolor=cyan \
-	  -V papersize:"a4paper"
+report:
+	make -C doc
 
 dist:   report
 	stack sdist
 
 .PHONY: test
 test:   build
-	test -s test || { echo "Please see README.md"; exit 1; }
+	@test -s test || { echo "Please see README.md"; exit 1; }
 	make -C test test
 
-PROJECT_ROOT = $(shell stack path --project-root)
-DISTDIR = $(PROJECT_ROOT)/$(shell stack path --dist-dir)
-TARBALL = $(DISTDIR)/$(shell stack list-dependencies | grep javalette | sed  's/ /-/').tar.gz
-
-checkdist:
-	stack sdist
+checkdist: dist
 	test/Grade $(TARBALL) -t test/testsuite
