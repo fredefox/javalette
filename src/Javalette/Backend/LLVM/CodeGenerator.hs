@@ -399,6 +399,13 @@ varInit tp reg op = emitInstructions
   [ LLVM.Alloca tp reg
   , LLVM.Store tp op (LLVM.Pointer tp) reg
   ]
+
+allocNew :: MonadCompile m => LLVM.Type -> m LLVM.Reg
+allocNew tp = do
+  r <- newReg
+  emitInstructions [LLVM.Alloca tp r]
+  return r
+
 trIdent :: Jlt.Ident -> LLVM.Reg
 trIdent (Jlt.Ident s) = LLVM.Reg s
 
@@ -510,17 +517,64 @@ resultOfExpressionTp tp e = case e of
     let tp' = trType tp
     emitInstructions $ [addOp op tp' r0 r1 r]
     return (Left r)
+{-
+  Jlt.CondElse e s0 s1 -> do
+    t <- newLabel
+    f <- newLabel
+    l <- newLabel
+    cond e t f
+    emitLabel t
+    cont s0
+    jumpTo l
+    emitLabel f
+    cont s1
+    jumpTo l
+    emitLabel l
+-}
+
   Jlt.EAnd e0 e1 -> do
-    r0 <- resultOfExpression e0
+    t <- newLabel
+    f <- newLabel
+    l <- newLabel
+    let tp' = LLVM.I 1
+    res <- allocNew tp'
+    cond e0 t f
+    emitLabel t
     r1 <- resultOfExpression e1
+    emitInstructions
+      [ LLVM.Store tp' r1 (LLVM.Pointer tp') res
+      ]
     r <- newReg
-    emitInstructions [LLVM.And (trType tp) r0 r1 r]
+    jumpTo l
+    emitLabel f
+    emitInstructions
+      [ LLVM.Store tp' (Right (LLVM.ValInt 0)) (LLVM.Pointer tp') res
+      ]
+    jumpTo l
+    emitLabel l
+    emitInstructions [LLVM.Load tp' (LLVM.Pointer tp') res r]
     return (Left r)
   Jlt.EOr e0 e1 -> do
-    r0 <- resultOfExpression e0
+    t <- newLabel
+    f <- newLabel
+    l <- newLabel
+    let tp' = LLVM.I 1
+    res <- allocNew tp'
+    cond e0 t f
+    emitLabel f
     r1 <- resultOfExpression e1
+    emitInstructions
+      [ LLVM.Store tp' r1 (LLVM.Pointer tp') res
+      ]
     r <- newReg
-    emitInstructions [LLVM.Or (trType tp) r0 r1 r]
+    jumpTo l
+    emitLabel t
+    emitInstructions
+      [ LLVM.Store tp' (Right (LLVM.ValInt 1)) (LLVM.Pointer tp') res
+      ]
+    jumpTo l
+    emitLabel l
+    emitInstructions [LLVM.Load tp' (LLVM.Pointer tp') res r]
     return (Left r)
   Jlt.Neg e0 -> do
     r0 <- resultOfExpression e0
@@ -532,7 +586,8 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
-    emitInstructions [LLVM.Sub tp' (zero tp' ) r0 r]
+        llvmTrue = LLVM.ValInt 1
+    emitInstructions [LLVM.Xor tp' r0 (Right llvmTrue) r]
     return (Left r)
   Jlt.EString s -> do
     sReg <- lookupString s

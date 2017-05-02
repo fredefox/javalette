@@ -146,6 +146,7 @@ data Instruction
   -- | Bitwise operators
   | And Type Operand Operand Reg
   | Or  Type Operand Operand Reg
+  | Xor Type Operand Operand Reg
   -- | Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
@@ -228,6 +229,7 @@ instance Pretty Instruction where
     FDiv t op0 op1 r -> prettyBinInstr (text "fdiv") t op0 op1 r
     And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
     Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
+    Xor t op0 op1 r -> prettyBinInstr (text "xor") t op0 op1 r
     Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
     Fcmp cmpr t op0 op1 r -> prettyBinInstr (text "fcmp" <+> pPrint cmpr) t op0 op1 r
   -- <result> = getelementptr <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
