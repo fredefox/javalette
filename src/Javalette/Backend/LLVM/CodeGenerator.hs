@@ -155,6 +155,11 @@ collectStringsItem :: Jlt.Item -> [String]
 collectStringsItem i = case i of
   Jlt.NoInit{} -> []
   Jlt.Init _ e -> collectStringsExpr e
+  Jlt.InitObj _ c -> collectStringsCons c
+
+collectStringsCons :: Jlt.Constructor -> [String]
+collectStringsCons c = case c of
+  Jlt.ArrayCon _ e -> collectStringsExpr e
 
 collectStringsExpr :: Jlt.Expr -> [String]
 collectStringsExpr e = case e of
@@ -168,6 +173,11 @@ collectStringsExpr e = case e of
   Jlt.EAnd e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
   Jlt.EOr e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
   Jlt.EAnn _ e0 -> collectStringsExpr e0
+  Jlt.Dot e0 _ -> collectStringsExpr e0
+  Jlt.EIndex e0 idx -> collectStringsExpr e0 ++ collectStringsIndex idx
+
+collectStringsIndex :: Jlt.Index -> [String]
+collectStringsIndex (Jlt.Indx e) = collectStringsExpr e
 
 trTopDef :: ReadEnv -> Jlt.TopDef -> Either CompilerErr LLVM.Def
 trTopDef re (Jlt.FnDef t i args blk) = do
