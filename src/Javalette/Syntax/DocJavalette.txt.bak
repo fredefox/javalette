@@ -89,7 +89,7 @@ All other symbols are terminals.
   |  |  **|**  | //Ident// ``=`` //Constructor// 
   | //[Item]// | -> | //Item// 
   |  |  **|**  | //Item// ``,`` //[Item]// 
-  | //Constructor// | -> | ``new`` //Type// ``[`` //Expr// ``]`` 
+  | //Constructor// | -> | ``new`` //Type// ``[`` //Integer// ``]`` 
   | //LValue// | -> | //Ident// //MaybeIndex// 
   | //MaybeIndex// | -> | **eps**
   |  |  **|**  | //Index// 

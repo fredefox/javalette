@@ -233,7 +233,7 @@ typecheckStmt t s = case s of
     addBindings $ map (\i -> (itemIdent i, t0)) its
     return (Decl t0 its')
   Ass i e        -> do
-    ti <- lookupTypeVar i
+    ti <- lookupTypeLValue i
     (e', te) <- infer e
     unless (ti == te)
       $ throwError TypeMismatch
@@ -242,12 +242,12 @@ typecheckStmt t s = case s of
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass i (EAdd (EVar i) Plus  (one t')))
+    typecheckStmt t (Ass (variable i) (EAdd (EVar i) Plus  (one t')))
   Decr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass i (EAdd (EVar i) Minus (one t')))
+    typecheckStmt t (Ass (variable i) (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -270,10 +270,21 @@ typecheckStmt t s = case s of
     return (While e' s0')
   SExp e -> SExp <$> typechk e
 
+variable :: Ident -> LValue
+variable v = LVal v NotIndexed
+
+lookupTypeLValue :: LValue -> TypeChecker Type
+lookupTypeLValue (LVal i mi) = case mi of
+  NotIndexed -> lookupTypeVar i
+  IsIndexed _idx -> todo
+
+todo :: a
+todo = error "Not yet implemented"
+
 one :: Type -> Expr
 one t = case t of
   Int -> ELitInt 1 ; Doub -> ELitDoub 1
-  Bool -> err ; Void -> err ; String -> err ; Fun{} -> err
+  Bool -> err ; Void -> err ; String -> err ; Fun{} -> err; Array{} -> err
   where
     err = error "non-numeric value"
 
@@ -327,12 +338,13 @@ itemIdent :: Item -> Ident
 itemIdent itm = case itm of
   NoInit i -> i
   Init i _ -> i
+  InitObj i _ -> i
 
 -- | Some types are "numerical" values.
 isNumeric :: Type -> Bool
 isNumeric t = case t of
   { Int  -> True ; Doub -> True
-  ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False
+  ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False ; Array{} -> False
   }
 
 -- | Checks that it is the single integer type.
@@ -528,7 +540,7 @@ inferStmt s = case s of
   SExp{} -> return Never
 
 -- TODO Unimplemented.
-assign :: Ident -> Expr -> TypeChecker ()
+assign :: LValue -> Expr -> TypeChecker ()
 assign _ _ = return ()
 incr, decr :: Ident -> TypeChecker ()
 incr _ = return ()

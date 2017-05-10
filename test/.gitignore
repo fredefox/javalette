@@ -2,3 +2,5 @@
 *.o
 Grade
 graderTestSuite/
+*.bc
+*.ll

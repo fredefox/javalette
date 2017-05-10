@@ -14,4 +14,5 @@ distrib:
 BUILD_DIR = $(shell stack path --project-root)/$(shell stack path --dist-dir)/build/jlc
 
 test:   Grade
-	./Grade -g-no-pie -bLLVM $(BUILD_DIR)
+	./Grade -g-no-pie -bLLVM $(BUILD_DIR) \
+		-x arrays1

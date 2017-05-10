@@ -316,12 +316,14 @@ emitTerminator :: MonadWriter [AlmostInstruction] m => LLVM.TermInstr -> m ()
 emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
-  => Jlt.Ident -> Jlt.Expr -> m ()
-assign i e = do
-  op <- resultOfExpression e
-  let tp = trType (typeof e)
-      reg = trNameToReg i
-  emitInstructions [LLVM.Store tp op (LLVM.Pointer tp) reg]
+  => Jlt.LValue -> Jlt.Expr -> m ()
+assign (Jlt.LVal i mi) e = case mi of
+  Jlt.NotIndexed -> do
+    op <- resultOfExpression e
+    let tp = trType (typeof e)
+        reg = trNameToReg i
+    emitInstructions [LLVM.Store tp op (LLVM.Pointer tp) reg]
+  Jlt.IsIndexed _idx -> error "Not yet imlemented"
 
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp

@@ -39,7 +39,7 @@ data Item
     = NoInit Ident | Init Ident Expr | InitObj Ident Constructor
   deriving (Eq, Ord, Show, Read)
 
-data Constructor = ArrayCon Type Expr
+data Constructor = ArrayCon Type Integer
   deriving (Eq, Ord, Show, Read)
 
 data LValue = LVal Ident MaybeIndex
