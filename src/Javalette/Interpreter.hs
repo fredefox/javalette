@@ -218,11 +218,11 @@ defaultValue t = case t of
   AST.Fun{} -> error "Cannot assign functions to variables"
 
 assign :: AST.LValue -> AST.Expr -> Interpreter ()
-assign (AST.LVal i mi) e = case mi of
-  AST.NotIndexed -> do
+assign lv e = case lv of
+  AST.LIdent i -> do
     v <- valueOf e
     setVariable i v
-  AST.IsIndexed _idx -> error "Not implemented"
+  AST.LIndexed _i _idx -> error "Not implemented"
 
 incr, decr :: AST.Ident -> Interpreter ()
 incr = (`modifyVariable` incrVal)

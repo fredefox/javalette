@@ -255,12 +255,12 @@ typecheckStmt t s = case s of
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass (variable i) (EAdd (EVar i) Plus  (one t')))
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t')))
   Decr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass (variable i) (EAdd (EVar i) Minus (one t')))
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -287,13 +287,10 @@ typecheckStmt t s = case s of
       $ throwError (GenericError "Expression statements must be void")
     return e'
 
-variable :: Ident -> LValue
-variable v = LVal v NotIndexed
-
 lookupTypeLValue :: LValue -> TypeChecker Type
-lookupTypeLValue (LVal i mi) = case mi of
-  NotIndexed -> lookupTypeVar i
-  IsIndexed _idx -> todo
+lookupTypeLValue lv = case lv of
+  LIdent i -> lookupTypeVar i
+  LIndexed _i _idx -> todo
 
 todo :: a
 todo = error "Not yet implemented"

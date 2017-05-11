@@ -78,12 +78,9 @@ lookupIdentErr i
   <$> lookupIdent i
 
 lookupLValErr :: LValue -> R LValue
-lookupLValErr (LVal i mi) = case mi of
-  NotIndexed -> variable <$> lookupIdentErr i
-  IsIndexed _idx -> error "Not yet implemented"
-
-variable :: Ident -> LValue
-variable i = LVal i NotIndexed
+lookupLValErr lv = case lv of
+  LIdent i -> LIdent <$> lookupIdentErr i
+  LIndexed _i _idx -> error "Not yet implemented"
 
 pushScope :: R ()
 pushScope = modifyVars push
