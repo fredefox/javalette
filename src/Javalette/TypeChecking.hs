@@ -361,6 +361,15 @@ typecheckItem t i = case i of
     unless (t == t')
       $ throwError TypeMismatch
     return (Init idnt e')
+  InitObj i0 c -> InitObj i0 <$> typecheckConstructor c
+
+typecheckConstructor :: Constructor -> TypeChecker Constructor
+typecheckConstructor c = case c of
+  ArrayCon tp e -> do
+    (e', t') <- infer e
+    unless (t' == Int)
+      $ throwError (GenericError "Length of array must be an integer")
+    return (ArrayCon tp e')
 
 instance TypeCheck Expr where
 instance Infer Expr where
@@ -404,6 +413,30 @@ instance Infer Expr where
       (e0', e1', t) <- checkBinOp (== AST.Bool) e0 e1
       return (EOr e0' e1', t)
     EAnn tp _ -> return (e, tp)
+    Dot e0 i -> typeOfDot e0 i
+    EIndex e0 idx -> typeOfIndex e0 idx
+
+-- `typeOfDot` assumes that the only thing you can dot is the length of a list.
+-- This must be changed if support for objects is needed.
+typeOfDot :: Expr -> Ident -> TypeChecker (Expr, Type)
+typeOfDot e i@(Ident s) = do
+  (e', t) <- infer e
+  unless (isArrayType t)
+    $ throwError (GenericError "Can only dot arrays")
+  unless (s == "length")
+    $ throwError (GenericError "Can only dot da length")
+  return (Dot e' i, Int)
+
+typeOfIndex :: Expr -> Index -> TypeChecker (Expr, Type)
+typeOfIndex e idx = do
+  (e', t) <- infer e
+  case t of
+    Array tElem -> return (EIndex e' idx, tElem)
+    _           -> throwError (GenericError "Can only index arrays")
+
+isArrayType :: Type -> Bool
+isArrayType t = case t of
+  Array{} -> True ; _ -> False
 
 annotate :: Expr -> Type -> (Expr, Type)
 annotate e t = (EAnn t e, t)
