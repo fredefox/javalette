@@ -136,6 +136,10 @@ rItemM itm = case itm of
     e' <- rExprM e
     i' <- renameIdent i
     return (Init i' e')
+  InitObj i c -> InitObj <$> renameIdent i <*> rConstructorM c
+
+rConstructorM :: Constructor -> R Constructor
+rConstructorM (ArrayCon t e) = ArrayCon t <$> rExprM e
 
 rExprM :: Expr -> R Expr
 rExprM e = case e of
@@ -152,5 +156,10 @@ rExprM e = case e of
   EAnd e0 e1 -> EAnd <$> rExprM e0 <*> rExprM e1
   EOr e0 e1 -> EOr <$> rExprM e0 <*> rExprM e1
   EAnn tp e0 -> EAnn tp <$> rExprM e0
+  Dot e0 i -> Dot <$> rExprM e0 <*> renameIdent i
+  EIndex e0 i -> EIndex <$> rExprM e0 <*> rIndexM i
   where
     ret = return e
+
+rIndexM :: Index -> R Index
+rIndexM (Indx e) = Indx <$> rExprM e
