@@ -604,6 +604,7 @@ inferStmt s = case s of
       (Just _)               -> throwError (GenericError "Impossible type-error")
       Nothing                -> sometimes <$> inferStmt s0
   SExp{} -> return Never
+  For{} -> return Never
 
 -- TODO Unimplemented.
 assign :: LValue -> Expr -> TypeChecker ()
