@@ -131,12 +131,16 @@ instance Print Constructor where
 
 instance Print LValue where
   prt i e = case e of
-    LIdent id -> prPrec i 0 (concatD [prt 0 id])
-    LIndexed id index -> prPrec i 0 (concatD [prt 0 id, prt 0 index])
+    LVal id maybeindex -> prPrec i 0 (concatD [prt 0 id, prt 0 maybeindex])
+
+instance Print MaybeIndex where
+  prt i e = case e of
+    NotIndexed -> prPrec i 0 (concatD [])
+    IsIndexed index -> prPrec i 0 (concatD [prt 0 index])
 
 instance Print Index where
   prt i e = case e of
-    Indx expr -> prPrec i 0 (concatD [doc (showString "["), prt 0 expr, doc (showString "]")])
+    Indx expr -> prPrec i 0 (concatD [prt 0 expr, doc (showString "[]")])
 
 instance Print Type where
   prt i e = case e of

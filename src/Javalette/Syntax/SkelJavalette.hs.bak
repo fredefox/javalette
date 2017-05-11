@@ -48,8 +48,11 @@ transConstructor x = case x of
   ArrayCon type_ expr -> failure x
 transLValue :: LValue -> Result
 transLValue x = case x of
-  LIdent ident -> failure x
-  LIndexed ident index -> failure x
+  LVal ident maybeindex -> failure x
+transMaybeIndex :: MaybeIndex -> Result
+transMaybeIndex x = case x of
+  NotIndexed -> failure x
+  IsIndexed index -> failure x
 transIndex :: Index -> Result
 transIndex x = case x of
   Indx expr -> failure x

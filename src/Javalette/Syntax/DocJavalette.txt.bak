@@ -90,9 +90,10 @@ All other symbols are terminals.
   | //[Item]// | -> | //Item// 
   |  |  **|**  | //Item// ``,`` //[Item]// 
   | //Constructor// | -> | ``new`` //Type// ``[`` //Expr// ``]`` 
-  | //LValue// | -> | //Ident// 
-  |  |  **|**  | //Ident// //Index// 
-  | //Index// | -> | ``[`` //Expr// ``]`` 
+  | //LValue// | -> | //Ident// //MaybeIndex// 
+  | //MaybeIndex// | -> | **eps**
+  |  |  **|**  | //Index// 
+  | //Index// | -> | //Expr// ``[]`` 
   | //Type// | -> | ``int`` 
   |  |  **|**  | ``double`` 
   |  |  **|**  | ``boolean`` 

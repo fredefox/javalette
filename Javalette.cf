@@ -28,7 +28,7 @@ NoInit.    Item ::= Ident ;
 
 Init.      Item ::= Ident "=" Expr ;
 
-InitObj.   Item ::= Ident "=" Constructor ;
+InitObj.   Item ::= Ident "=" "new" Constructor ;
 
 separator nonempty Item "," ;
 
@@ -48,17 +48,17 @@ CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 
+For.       Stmt ::= "for" "(" Type Ident ":" Expr ")" Stmt ;
+
 SExp.      Stmt ::= Expr  ";" ;
 
-ArrayCon.  Constructor ::= "new" Type "[" Expr "]" ;
+ArrayCon.  Constructor ::= Type "[" Expr "]" ;
 
-LVal.      LValue ::= Ident MaybeIndex ;
+LIdent.    LValue ::= Ident ;
 
-NotIndexed. MaybeIndex ::= ;
+LIndexed.  LValue ::= Ident Index ;
 
-IsIndexed. MaybeIndex ::= Index ;
-
-Indx.      Index ::= "[" Expr "]" ;
+Indx.      Index ::= "[" Ident "]" ;
 
 -- Types ---------------------------------------------------
 

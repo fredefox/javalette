@@ -42,7 +42,10 @@ data Item
 data Constructor = ArrayCon Type Expr
   deriving (Eq, Ord, Show, Read)
 
-data LValue = LIdent Ident | LIndexed Ident Index
+data LValue = LVal Ident MaybeIndex
+  deriving (Eq, Ord, Show, Read)
+
+data MaybeIndex = NotIndexed | IsIndexed Index
   deriving (Eq, Ord, Show, Read)
 
 data Index = Indx Expr
