@@ -11,13 +11,23 @@ import Control.Monad.Writer
 import Control.Monad.Reader
 import Data.Map (Map)
 import qualified Data.Map as M
+import qualified Control.Exception as E
 
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
 
-newtype CompilerErr = Generic String deriving (Show)
+data CompilerErr = Generic String | Impossible String | TypeError String
+
+instance Show CompilerErr where
+  show e = case e of
+    Generic s -> "ERROR: " ++ s
+    Impossible s -> "THE IMPOSSIBLE HAPPENED: " ++ s
+    TypeError s -> "TYPE ERROR: " ++ s
+
+instance E.Exception CompilerErr where
+
 data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.
@@ -650,11 +660,14 @@ call t n ops r = do
 
 -- Various runtime errors
 
+{-# INLINE impossible #-}
 impossible :: String -> a
-impossible = error . ("THE IMPOSSIBLE HAPPENED\n" ++)
+impossible = E.throw . Impossible
 
+{-# INLINE typeerror #-}
 typeerror :: String -> a
-typeerror = impossible . ("TYPEERROR " ++)
+typeerror = E.throw . TypeError
 
+{-# INLINE impossibleRemoved #-}
 impossibleRemoved :: a
 impossibleRemoved = typeerror "removed by typechecker"
