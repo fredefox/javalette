@@ -1,6 +1,7 @@
 {- | Typechecking of the Javalette programming language -}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 module Javalette.TypeChecking
   ( runTypeChecker
   , evalTypeChecker
@@ -655,6 +656,8 @@ staticValue e = case e of
     EOr{}  -> stub
     EApp{} -> stub
     EAnn _ e0 -> staticValue e0
+    Dot{}    -> stub
+    EIndex{} -> stub
     where
       changeVal f m = fmap f <$> m
       valNot (ValBool b) = ValBool (not b)
