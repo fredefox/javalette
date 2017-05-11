@@ -58,7 +58,7 @@ LIdent.    LValue ::= Ident ;
 
 LIndexed.  LValue ::= Ident Index ;
 
-Indx.      Index ::= "[" Ident "]" ;
+Indx.      Index ::= "[" Expr "]" ;
 
 -- Types ---------------------------------------------------
 

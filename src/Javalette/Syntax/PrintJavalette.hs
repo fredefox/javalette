@@ -115,6 +115,7 @@ instance Print Stmt where
     Cond expr stmt -> prPrec i 0 (concatD [doc (showString "if"), doc (showString "("), prt 0 expr, doc (showString ")"), prt 0 stmt])
     CondElse expr stmt1 stmt2 -> prPrec i 0 (concatD [doc (showString "if"), doc (showString "("), prt 0 expr, doc (showString ")"), prt 0 stmt1, doc (showString "else"), prt 0 stmt2])
     While expr stmt -> prPrec i 0 (concatD [doc (showString "while"), doc (showString "("), prt 0 expr, doc (showString ")"), prt 0 stmt])
+    For type_ id expr stmt -> prPrec i 0 (concatD [doc (showString "for"), doc (showString "("), prt 0 type_, prt 0 id, doc (showString ":"), prt 0 expr, doc (showString ")"), prt 0 stmt])
     SExp expr -> prPrec i 0 (concatD [prt 0 expr, doc (showString ";")])
   prtList _ [] = (concatD [])
   prtList _ (x:xs) = (concatD [prt 0 x, prt 0 xs])
@@ -122,12 +123,12 @@ instance Print Item where
   prt i e = case e of
     NoInit id -> prPrec i 0 (concatD [prt 0 id])
     Init id expr -> prPrec i 0 (concatD [prt 0 id, doc (showString "="), prt 0 expr])
-    InitObj id constructor -> prPrec i 0 (concatD [prt 0 id, doc (showString "="), prt 0 constructor])
+    InitObj id constructor -> prPrec i 0 (concatD [prt 0 id, doc (showString "="), doc (showString "new"), prt 0 constructor])
   prtList _ [x] = (concatD [prt 0 x])
   prtList _ (x:xs) = (concatD [prt 0 x, doc (showString ","), prt 0 xs])
 instance Print Constructor where
   prt i e = case e of
-    ArrayCon type_ expr -> prPrec i 0 (concatD [doc (showString "new"), prt 0 type_, doc (showString "["), prt 0 expr, doc (showString "]")])
+    ArrayCon type_ expr -> prPrec i 0 (concatD [prt 0 type_, doc (showString "["), prt 0 expr, doc (showString "]")])
 
 instance Print LValue where
   prt i e = case e of

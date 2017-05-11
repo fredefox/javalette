@@ -37,6 +37,7 @@ transStmt x = case x of
   Cond expr stmt -> failure x
   CondElse expr stmt1 stmt2 -> failure x
   While expr stmt -> failure x
+  For type_ ident expr stmt -> failure x
   SExp expr -> failure x
 transItem :: Item -> Result
 transItem x = case x of
@@ -48,14 +49,11 @@ transConstructor x = case x of
   ArrayCon type_ expr -> failure x
 transLValue :: LValue -> Result
 transLValue x = case x of
-  LVal ident maybeindex -> failure x
-transMaybeIndex :: MaybeIndex -> Result
-transMaybeIndex x = case x of
-  NotIndexed -> failure x
-  IsIndexed index -> failure x
+  LIdent ident -> failure x
+  LIndexed ident index -> failure x
 transIndex :: Index -> Result
 transIndex x = case x of
-  Indx expr -> failure x
+  Indx ident -> failure x
 transType :: Type -> Result
 transType x = case x of
   Int -> failure x

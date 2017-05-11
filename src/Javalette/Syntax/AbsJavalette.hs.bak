@@ -32,6 +32,7 @@ data Stmt
     | Cond Expr Stmt
     | CondElse Expr Stmt Stmt
     | While Expr Stmt
+    | For Type Ident Expr Stmt
     | SExp Expr
   deriving (Eq, Ord, Show, Read)
 
@@ -42,13 +43,10 @@ data Item
 data Constructor = ArrayCon Type Expr
   deriving (Eq, Ord, Show, Read)
 
-data LValue = LVal Ident MaybeIndex
+data LValue = LIdent Ident | LIndexed Ident Index
   deriving (Eq, Ord, Show, Read)
 
-data MaybeIndex = NotIndexed | IsIndexed Index
-  deriving (Eq, Ord, Show, Read)
-
-data Index = Indx Expr
+data Index = Indx Ident
   deriving (Eq, Ord, Show, Read)
 
 data Type

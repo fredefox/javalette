@@ -1,7 +1,6 @@
 {- | Typechecking of the Javalette programming language -}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
-{-# OPTIONS_GHC -Wall -Werror #-}
 module Javalette.TypeChecking
   ( runTypeChecker
   , evalTypeChecker

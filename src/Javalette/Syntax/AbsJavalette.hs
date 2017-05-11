@@ -32,6 +32,7 @@ data Stmt
     | Cond Expr Stmt
     | CondElse Expr Stmt Stmt
     | While Expr Stmt
+    | For Type Ident Expr Stmt
     | SExp Expr
   deriving (Eq, Ord, Show, Read)
 
