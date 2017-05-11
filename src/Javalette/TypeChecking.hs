@@ -80,13 +80,13 @@ class TypeCheck a => Infer a where
 data Env = Env
   { envVars :: [Map Ident Type]
   , envDefs :: Definitions
-  }
+  } deriving (Show)
 
 type Definitions = Map Ident Definition
 
 -- | A definition is either part of the built-in methods or it is
 -- part of the AST.
-data Definition = DefWiredIn WiredIn | Def TopDef
+data Definition = DefWiredIn WiredIn | Def TopDef deriving (Show)
 
 -- | Modifies the variables - used during assignment.
 modifyVars :: ([Map Ident Type] -> [Map Ident Type]) -> Env -> Env
@@ -126,7 +126,7 @@ data WiredIn = WiredIn
   { _wiredInType :: Type
   , _wiredInArgs :: [Arg]
   , _wiredInIdent :: Ident
-  }
+  } deriving (Show)
 
 -- | The list of wired-in definitions.
 wiredInDefs :: Definitions
@@ -143,6 +143,18 @@ wiredInDefs = M.fromList
 -- | Adds a new scope. Used when entering blocks.
 newScope :: TypeChecker ()
 newScope = modify (modifyVars $ \xs -> M.empty : xs)
+
+-- | Pops a scope from the stack.
+popScope :: TypeChecker ()
+popScope = modify (modifyVars $ \(_:xs) -> xs)
+
+-- | Executes a command in a new scope and returns the result of that action.
+withNewScope :: TypeChecker a -> TypeChecker a
+withNewScope act = do
+  newScope
+  x <- act
+  popScope
+  pure x
 
 -- | Used finding all top-level definitions.
 unionDefs :: Definitions -> TypeChecker ()
@@ -196,12 +208,12 @@ instance TypeCheck Prog where
 -- specified type. Note that this does *not* guarantee that all paths return a
 -- value of the given type. For this you need `staticControlFlowCheck`.
 instance TypeCheck TopDef where
-  typechk (FnDef t i args blk) = do
-    _ <- newScope
-    _ <- addArgs args
-    blk' <- typecheckBlk t blk
-    let blk'' = case t of Void -> implicitReturn blk' ; _ -> blk'
-    return (FnDef t i args blk'')
+  typechk (FnDef t i args blk) =
+    withNewScope $ do
+      _ <- addArgs args
+      blk' <- typecheckBlk t blk
+      let blk'' = case t of Void -> implicitReturn blk' ; _ -> blk'
+      return (FnDef t i args blk'')
 
 implicitReturn :: Blk -> Blk
 implicitReturn (Block stmts) = Block $ case safeLast stmts of
@@ -220,7 +232,7 @@ safeLast (_ : xs) = safeLast xs
 -- instance TypeCheck Blk where
 -- | Almost a `TypeCheck` instance for block-statements. See `typecheckStmts`.
 typecheckBlk :: Type -> Blk -> TypeChecker Blk
-typecheckBlk t (Block stms) = Block <$> mapM (typecheckStmt t) stms
+typecheckBlk t (Block stms) = Block <$> withNewScope (mapM (typecheckStmt t) stms)
 
 -- Almost the `TypeCheck` instance for `Stmt`. We check that *if* there is a
 -- return-statement, then the inferred type of that expression has the given
@@ -228,7 +240,7 @@ typecheckBlk t (Block stms) = Block <$> mapM (typecheckStmt t) stms
 typecheckStmt :: Type -> Stmt -> TypeChecker Stmt
 typecheckStmt t s = case s of
   Empty          -> return Empty
-  BStmt blk      -> BStmt <$> (newScope >> typecheckBlk t blk)
+  BStmt blk      -> BStmt <$> (withNewScope $ typecheckBlk t blk)
   Decl t0 its    -> do
     its' <- mapM (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
@@ -269,7 +281,11 @@ typecheckStmt t s = case s of
     e' <- inferBoolean e
     s0' <- typecheckStmt t s0
     return (While e' s0')
-  SExp e -> SExp <$> typechk e
+  SExp e -> SExp <$> do
+    (e', t') <- infer e
+    unless (isVoid t')
+      $ throwError (GenericError "Expression statements must be void")
+    return e'
 
 variable :: Ident -> LValue
 variable v = LVal v NotIndexed
@@ -346,6 +362,13 @@ isNumeric :: Type -> Bool
 isNumeric t = case t of
   { Int  -> True ; Doub -> True
   ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False ; Array{} -> False
+  }
+
+isVoid :: Type -> Bool
+isVoid t = case t of
+  { Void -> True
+  ; Int  -> False ; Doub -> False ; Bool -> False ; Fun{} -> False
+  ; String{} -> False ; Array{} -> False
   }
 
 -- | Checks that it is the single integer type.
@@ -521,8 +544,7 @@ staticControlFlowCheck (Program defs) = do
 
 staticControlFlowCheckDef
   :: TopDef -> TypeChecker ()
-staticControlFlowCheckDef (FnDef t _ args blk) = do
-  _ <- newScope
+staticControlFlowCheckDef (FnDef t _ args blk) = withNewScope $ do
   _ <- addArgs args
   ft <- inferBlk blk
   case ft of
@@ -535,7 +557,7 @@ staticControlFlowCheckDef (FnDef t _ args blk) = do
 inferStmt :: Stmt -> TypeChecker (Frequency Type)
 inferStmt s = case s of
   Empty          -> return Never
-  BStmt blk      -> newScope >> inferBlk blk
+  BStmt blk      -> withNewScope $ inferBlk blk
   Decl t0 its    -> do
     addBindings $ map (\i -> (itemIdent i, t0)) its
     return Never
