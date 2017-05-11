@@ -143,11 +143,12 @@ testSpecs testProg exts libpath =
 testBack :: Backend -> TestFunction
 testBack back _cmd good fs = if good then test fs back else return []
 
-testLLVM :: String -> FilePath -> TestFunction
-testLLVM llvmversion libpath = testBack (llvmBackend llvmversion libpath)
+testLLVM :: [String] -> String -> FilePath -> TestFunction
+testLLVM gccflags llvmversion libpath =
+  testBack (llvmBackend gccflags llvmversion libpath)
 
-testx86 :: X86ABI -> FilePath -> TestFunction
-testx86 abi libpath = testBack (x86Backend abi libpath)
+testx86 :: [String] -> X86ABI -> FilePath -> TestFunction
+testx86 gccflags abi libpath = testBack (x86Backend gccflags abi libpath)
 
 testCustom :: FilePath -> FilePath -> TestFunction
 testCustom jlc libpath = testBack (customBackend jlc libpath)

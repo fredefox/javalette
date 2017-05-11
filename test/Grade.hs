@@ -27,6 +27,7 @@ data Flag
   | Back         BackTest
   | LLVMVersion  String
   | TestSuiteDir FilePath
+  | GCCFlag      String
   | KeepTemp
   | PrintHelp
   | Error        String
@@ -48,6 +49,8 @@ flags =
       "don't remove temporary directories, if any"
     , Option "h?" ["help"] (NoArg PrintHelp)
       "print this message and exit"
+    , Option "g" ["gcc-flag"] (ReqArg GCCFlag "<flag>")
+      "print this message and exit"
     ]
 
 -- | Read an extension flag from a string. Gives back an error flag if the
@@ -61,9 +64,11 @@ extension str =
 --   didn't match any known backends.
 backend :: String -> Flag
 backend "LLVM"   = Back $ BackTest $ \opts ->
-  testLLVM (last $ "" : ['-':v | LLVMVersion v <- opts])
-backend "x86"    = Back $ BackTest $ const $ testx86 X86
-backend "x86_64" = Back $ BackTest $ const $ testx86 X86_64
+  testLLVM ([f | GCCFlag f <- opts]) (last $ "" : ['-':v | LLVMVersion v <- opts])
+backend "x86" = Back $ BackTest $ \opts ->
+  testx86 [f | GCCFlag f <- opts] X86
+backend "x86_64" = Back $ BackTest $ \opts ->
+  testx86 [f | GCCFlag f <- opts] X86_64
 backend "custom" = Back $ BackTest $ \opts ->
   testCustom $ last $ "jlc" : [s | SearchScript s <- opts]
 backend b        = Error $ "unknown backend: " ++ b
@@ -96,6 +101,9 @@ helpMessage prog = init $ unlines
     ". This object file should " ++ underline ++ "not" ++ normal
   , "be linked against your standard library, as the test suite performs this"
   , "linking itself."
+  , "If the test suite is complaining about errors related to the linker"
+  , "(/usr/bin/ld) when testing your backend, try passing the -no-pie GCC flag using the"
+  , "-g option: `./Grade -g-no-pie ...'."
   , ""
   , "For the custom backend, the test suite expects your compiler to produce an"
   , "executable `a.out' in the " ++ underline ++ "current working directory" ++ normal ++ "."
