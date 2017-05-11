@@ -502,14 +502,15 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [mulOp op (trType tp) r0 r1 r]
+    let tp' = trType tp
+    emitInstructions [LLVM.BinOp (mulOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EAdd e0 op e1 -> do
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
     let tp' = trType tp
-    emitInstructions [addOp op tp' r0 r1 r]
+    emitInstructions [LLVM.BinOp (addOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EAnd e0 e1 -> do
     t <- newLabel
@@ -559,14 +560,14 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
-    emitInstructions [addOp Jlt.Minus tp' (zero tp') r0 r]
+    emitInstructions [LLVM.BinOp (addOp Jlt.Minus tp') tp' (zero tp') r0 r]
     return (Left r)
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
         llvmTrue = LLVM.ValInt 1
-    emitInstructions [LLVM.Xor tp' r0 (Right llvmTrue) r]
+    emitInstructions [LLVM.BinOp LLVM.Xor tp' r0 (Right llvmTrue) r]
     return (Left r)
   Jlt.EString s -> do
     sReg <- lookupString s
@@ -590,18 +591,15 @@ stringType s = LLVM.Array (length s + 1) (LLVM.I 8)
 mulOp
   :: Jlt.MulOp
      -> LLVM.Type
-     -> LLVM.Operand
-     -> LLVM.Operand
-     -> LLVM.Reg
-     -> LLVM.Instruction
+     -> LLVM.Op
 mulOp op tp = case tp of
   LLVM.I{} -> case op of
-    Jlt.Times -> LLVM.Mul tp
-    Jlt.Div   -> LLVM.SDiv tp
-    Jlt.Mod   -> LLVM.SRem tp
+    Jlt.Times -> LLVM.Mul
+    Jlt.Div   -> LLVM.SDiv
+    Jlt.Mod   -> LLVM.SRem
   LLVM.Double -> case op of
-    Jlt.Times -> LLVM.FMul tp
-    Jlt.Div   -> LLVM.FDiv tp
+    Jlt.Times -> LLVM.FMul
+    Jlt.Div   -> LLVM.FDiv
     Jlt.Mod   -> typeerror "Can't take modulo of double values"
   _ -> typeerror "No mul-op for this type"
 
@@ -629,17 +627,14 @@ relOp op tp = case tp of
 addOp
   :: Jlt.AddOp
      -> LLVM.Type
-     -> LLVM.Operand
-     -> LLVM.Operand
-     -> LLVM.Reg
-     -> LLVM.Instruction
+     -> LLVM.Op
 addOp op tp = case tp of
   LLVM.I{} -> case op of
-    Jlt.Plus  -> LLVM.Add tp
-    Jlt.Minus -> LLVM.Sub tp
+    Jlt.Plus  -> LLVM.Add
+    Jlt.Minus -> LLVM.Sub
   LLVM.Double -> case op of
-    Jlt.Plus  -> LLVM.FAdd tp
-    Jlt.Minus -> LLVM.FSub tp
+    Jlt.Plus  -> LLVM.FAdd
+    Jlt.Minus -> LLVM.FSub
   _ -> typeerror "No add-op for this type"
 
 resultOfExpression :: MonadCompile m

@@ -19,6 +19,7 @@ module Javalette.Backend.LLVM.Language
   , Reg(..)
   , Operand
   , Val(..)
+  , Op(..)
   ) where
 
 import Prelude hiding (EQ)
@@ -132,21 +133,7 @@ data TermInstr
   deriving (Show)
 
 data Instruction
-  -- | Arithmetic operations, integers
-  = Add Type Operand Operand Reg
-  | Sub Type Operand Operand Reg
-  | Mul Type Operand Operand Reg
-  | SDiv Type Operand Operand Reg
-  | SRem Type Operand Operand Reg
-  -- | Arithmetic operations, doubles
-  | FAdd Type Operand Operand Reg
-  | FSub Type Operand Operand Reg
-  | FMul Type Operand Operand Reg
-  | FDiv Type Operand Operand Reg
-  -- | Bitwise operators
-  | And Type Operand Operand Reg
-  | Or  Type Operand Operand Reg
-  | Xor Type Operand Operand Reg
+  = BinOp Op Type Operand Operand Reg
   -- | Memory access
   | Alloca Type Reg
   | Load Type Type Reg Reg
@@ -159,6 +146,15 @@ data Instruction
   | CallVoid Type Name [(Type, Operand)]
   | Commented Instruction
   | Comment String
+  deriving (Show)
+
+data Op
+  -- | Arithmetic operations, integers
+  = Add | Sub | Mul | SDiv | SRem
+  -- | Arithmetic operations, doubles
+  | FAdd | FSub | FMul | FDiv
+  -- | Bitwise operators
+  | And | Or | Xor
   deriving (Show)
 
 -- TODO Split up comparisons in those that are integer-based and those that are
@@ -218,18 +214,9 @@ instance Pretty Instruction where
       <+> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)
     CallVoid t n args
       -> text "call" <+> pPrint t <+> pPrint n <> parens (pPrintTypeOp args)
-    Add t op0 op1 r -> prettyBinInstr (text "add") t op0 op1 r
-    Sub t op0 op1 r -> prettyBinInstr (text "sub") t op0 op1 r
-    Mul t op0 op1 r -> prettyBinInstr (text "mul") t op0 op1 r
-    SDiv t op0 op1 r -> prettyBinInstr (text "sdiv") t op0 op1 r
-    SRem t op0 op1 r -> prettyBinInstr (text "srem") t op0 op1 r
-    FAdd t op0 op1 r -> prettyBinInstr (text "fadd") t op0 op1 r
-    FSub t op0 op1 r -> prettyBinInstr (text "fsub") t op0 op1 r
-    FMul t op0 op1 r -> prettyBinInstr (text "fmul") t op0 op1 r
-    FDiv t op0 op1 r -> prettyBinInstr (text "fdiv") t op0 op1 r
-    And t op0 op1 r -> prettyBinInstr (text "and") t op0 op1 r
-    Or  t op0 op1 r -> prettyBinInstr (text "or") t op0 op1 r
-    Xor t op0 op1 r -> prettyBinInstr (text "xor") t op0 op1 r
+    BinOp op t op0 op1 r -> pPrint r <+> char '='
+      <+> pPrint op <+> pPrint t
+      <+> pPrintOp op0 <> char ',' <+> pPrintOp op1
     Icmp cmpr t op0 op1 r -> prettyBinInstr (text "icmp" <+> pPrint cmpr) t op0 op1 r
     Fcmp cmpr t op0 op1 r -> prettyBinInstr (text "fcmp" <+> pPrint cmpr) t op0 op1 r
   -- <result> = getelementptr <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
@@ -239,6 +226,21 @@ instance Pretty Instruction where
       pPrint nm <> char ',' <+> printArgs args
     Commented i' -> char ';' <+> pPrint i'
     Comment s -> char ';' <+> text s
+
+instance Pretty Op where
+  pPrint op = text $ case op of
+    Add -> "add"
+    Sub -> "sub"
+    Mul -> "mul"
+    SDiv -> "sdiv"
+    SRem -> "srem"
+    FAdd -> "fadd"
+    FSub -> "fsub"
+    FMul -> "fmul"
+    FDiv -> "fdiv"
+    And -> "and"
+    Or -> "or"
+    Xor -> "xor"
 
 printArgs :: [(Type, Int)] -> Doc
 printArgs = hsepBy (char ',') . map arg
