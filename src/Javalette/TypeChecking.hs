@@ -239,7 +239,7 @@ typecheckBlk t (Block stms) = Block <$> withNewScope (mapM (typecheckStmt t) stm
 typecheckStmt :: Type -> Stmt -> TypeChecker Stmt
 typecheckStmt t s = case s of
   Empty          -> return Empty
-  BStmt blk      -> BStmt <$> (withNewScope $ typecheckBlk t blk)
+  BStmt blk      -> BStmt <$> withNewScope (typecheckBlk t blk)
   Decl t0 its    -> do
     its' <- mapM (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
@@ -285,6 +285,13 @@ typecheckStmt t s = case s of
     unless (isVoid t')
       $ throwError (GenericError "Expression statements must be void")
     return e'
+  For t0 i e s0 -> withNewScope $ do
+    (e', t') <- infer e
+    addBinding i t0
+    unless (arrayOfType t' t0)
+      $ throwError (GenericError "Iterator/iteratee type mismatch")
+    s0' <- typecheckStmt t s0
+    return (For t0 i e' s0')
 
 lookupTypeLValue :: LValue -> TypeChecker Type
 lookupTypeLValue lv = case lv of
@@ -366,6 +373,12 @@ isVoid t = case t of
   ; Int  -> False ; Doub -> False ; Bool -> False ; Fun{} -> False
   ; String{} -> False ; Array{} -> False
   }
+
+-- | Checks that the first argument is an array of the latter type.
+arrayOfType :: Type -> Type -> Bool
+arrayOfType t u = case t of
+  Array t' -> t' == u
+  _ -> False
 
 -- | Checks that it is the single integer type.
 isInteger :: Type -> Bool
