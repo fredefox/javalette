@@ -296,10 +296,11 @@ typecheckStmt t s = case s of
 lookupTypeLValue :: LValue -> TypeChecker Type
 lookupTypeLValue lv = case lv of
   LIdent i -> lookupTypeVar i
-  LIndexed _i _idx -> todo
-
-todo :: a
-todo = error "Not yet implemented"
+  LIndexed i _ -> do
+    t <- lookupTypeVar i
+    case t of
+      Array t' -> return t'
+      _     -> throwError (GenericError "Cannot index into non-array type")
 
 one :: Type -> Expr
 one t = case t of
