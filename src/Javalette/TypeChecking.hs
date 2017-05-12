@@ -244,12 +244,12 @@ typecheckStmt t s = case s of
     its' <- mapM (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
     return (Decl t0 its')
-  Ass i e        -> do
-    ti <- lookupTypeLValue i
+  Ass lval e        -> do
+    (tLval, lval') <- lookupTypeLValue lval
     (e', te) <- infer e
-    unless (ti == te)
+    unless (tLval == te)
       $ throwError TypeMismatch
-    return (Ass i e')
+    return (Ass lval' e')
   Incr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
@@ -293,14 +293,23 @@ typecheckStmt t s = case s of
     s0' <- typecheckStmt t s0
     return (For t0 i e' s0')
 
-lookupTypeLValue :: LValue -> TypeChecker Type
+lookupTypeLValue :: LValue -> TypeChecker (Type, LValue)
 lookupTypeLValue lv = case lv of
-  LIdent i -> lookupTypeVar i
-  LIndexed i _ -> do
+  LIdent i -> do
     t <- lookupTypeVar i
+    return (t, lv)
+  LIndexed i idx -> do
+    t <- lookupTypeVar i
+    (idx', tp) <- inferIndex idx
+    unless (tp == Int) $ throwError $ GenericError $ "Indexes must be integers"
     case t of
-      Array t' -> return t'
+      Array t' -> return (t', LIndexed i idx')
       _     -> throwError (GenericError "Cannot index into non-array type")
+
+inferIndex :: Index -> TypeChecker (Index, Type)
+inferIndex (Indx e) = do
+  (e', t) <- infer e
+  return (Indx e', t)
 
 one :: Type -> Expr
 one t = case t of
@@ -448,7 +457,11 @@ instance Infer Expr where
       return (EOr e0' e1', t)
     EAnn tp _ -> return (e, tp)
     Dot e0 i -> typeOfDot e0 i
-    EIndex e0 idx -> typeOfIndex e0 idx
+    EIndex e0 idx -> do
+      (e', t) <- infer e0
+      case t of
+        Array tElem -> return (EIndex e' idx, tElem)
+        _ -> throwError (GenericError "Can only index arrays")
 
 -- `typeOfDot` assumes that the only thing you can dot is the length of a list.
 -- This must be changed if support for objects is needed.
@@ -460,13 +473,6 @@ typeOfDot e i@(Ident s) = do
   unless (s == "length")
     $ throwError (GenericError "Can only dot da length")
   return (Dot e' i, Int)
-
-typeOfIndex :: Expr -> Index -> TypeChecker (Expr, Type)
-typeOfIndex e idx = do
-  (e', t) <- infer e
-  case t of
-    Array tElem -> return (EIndex e' idx, tElem)
-    _           -> throwError (GenericError "Can only index arrays")
 
 isArrayType :: Type -> Bool
 isArrayType t = case t of

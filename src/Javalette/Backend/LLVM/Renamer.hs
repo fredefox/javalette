@@ -80,7 +80,7 @@ lookupIdentErr i
 lookupLValErr :: LValue -> R LValue
 lookupLValErr lv = case lv of
   LIdent i -> LIdent <$> lookupIdentErr i
-  LIndexed _i _idx -> error "Not yet implemented"
+  LIndexed i idx -> LIndexed <$> lookupIdentErr i <*> rIndexM idx
 
 pushScope :: R ()
 pushScope = modifyVars push
@@ -156,7 +156,7 @@ rExprM e = case e of
   EAnd e0 e1 -> EAnd <$> rExprM e0 <*> rExprM e1
   EOr e0 e1 -> EOr <$> rExprM e0 <*> rExprM e1
   EAnn tp e0 -> EAnn tp <$> rExprM e0
-  Dot e0 i -> Dot <$> rExprM e0 <*> renameIdent i
+  Dot e0 i -> Dot <$> rExprM e0 <*> pure i
   EIndex e0 i -> EIndex <$> rExprM e0 <*> rIndexM i
   where
     ret = return e

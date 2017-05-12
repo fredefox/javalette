@@ -374,10 +374,30 @@ assign :: MonadCompile m
 assign lv e = case lv of
   Jlt.LIdent i -> do
     op <- resultOfExpression e
-    let tp = trType (typeof e)
-        reg = trNameToReg i
-    emitInstructions [LLVM.Store tp op (LLVM.Pointer tp) reg]
-  Jlt.LIndexed _i _idx -> error "Not yet imlemented"
+    let reg = trNameToReg i
+    emitInstructions [LLVM.Store tpLLVM op (LLVM.Pointer tpLLVM) reg]
+  Jlt.LIndexed i idx -> do
+    op <- resultOfExpression e
+    let reg = trNameToReg i
+    idxLLVM <- typeValueOfIndex idx
+    r0 <- newReg
+    let tpElems = tpLLVM
+    emitInstructions
+      [ LLVM.GetElementPtr tpLLVM (LLVM.Pointer tpLLVM) reg
+        [(LLVM.I 32, 0), (LLVM.I 32, 1), fmap intVal idxLLVM] r0
+      , LLVM.Store tpElems op (LLVM.Pointer tpElems) r0
+      ]
+  where
+    tpJlt = typeof e
+    tpLLVM = trType tpJlt
+    -- TODO: It seems we need to let `GetElementPtr` accept "operands"
+    intVal :: LLVM.Operand -> Int
+    intVal (Right (LLVM.ValInt i)) = i
+
+typeValueOfIndex :: MonadCompile m => Jlt.Index -> m (LLVM.Type, LLVM.Operand)
+typeValueOfIndex (Jlt.Indx e) = do
+  r <- resultOfExpression e
+  return (trType $ typeof e, r)
 
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
@@ -673,6 +693,15 @@ resultOfExpressionTp tp e = case e of
         path = [(LLVM.I 32, 0), (LLVM.I 32, 0)]
     emitInstructions [LLVM.GetElementPtr tp' (LLVM.Pointer tp') sReg path r]
     return (Left r)
+  Jlt.Dot e0 (Jlt.Ident i) -> do
+    Left r <- resultOfExpression e0
+    unless (i == "length") (throwError (Generic $ "IMPOSSIBLE: " ++ i))
+    r0 <- newReg
+    emitInstructions [ LLVM.GetElementPtr tpLLVM (LLVM.Pointer tpLLVM) r [(LLVM.I 32, 0), (LLVM.I 32, 0)] r0 ]
+    return (Left r0)
+  Jlt.EIndex e0 idx -> return (Left (LLVM.Local "ohno"))
+  where
+    tpLLVM = trType tp
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
