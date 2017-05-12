@@ -20,7 +20,6 @@ module Javalette.Backend.LLVM.Language
   , Operand
   , Val(..)
   , Op(..)
-  , ExtDecl(..)
   ) where
 
 import Prelude hiding (EQ)
@@ -31,26 +30,19 @@ data Prog = Prog
   , pTypeDecls :: [(Name, Type)]
   , pDecls     :: [Decl]
   , pDefs      :: [Def]
-  , pExtDecls  :: [ExtDecl]
   } deriving (Show)
 
 instance Pretty Prog where
-  pPrint (Prog gVars tDecls decls defs extDecls)
+  pPrint (Prog gVars tDecls decls defs)
     =  pPrint gVars
     $$$ pPrint decls
     $$$ vcat (map eqls tDecls)
     $$$ pPrint defs
-    $$$ vcat (map pPrint extDecls)
     where
       eqls (n, t) = pPrint n <+> char '=' <+> pPrint t
 
 ($$$) :: Doc -> Doc -> Doc
 a $$$ b = a $+$ text "" $+$ b
-
-data ExtDecl = ExtDecl Type Name [Type] deriving (Show)
-
-instance Pretty ExtDecl where
-  pPrint (ExtDecl t n args) = text "declare" <+> pPrint t <+> pPrint n <> parens (hsepBy (char ',') (map pPrint args))
 
 data GlobalVar = GlobalVar
   { gvName :: Name

@@ -147,7 +147,6 @@ compileProgM (Jlt.Program defs) = do
     , LLVM.pTypeDecls = map flp . M.toList $ pTypeDecls
     , LLVM.pDecls   = builtinDecls
     , LLVM.pDefs    = pDefs
-    , LLVM.pExtDecls = [LLVM.ExtDecl (LLVM.Pointer (LLVM.I 8)) (LLVM.Global "calloc") [LLVM.I 32, LLVM.I 32]]
     }
   where
     constantsMap :: [String] -> Constants
@@ -555,6 +554,11 @@ builtinDecls =
     { LLVM.declType = LLVM.Void
     , LLVM.declName = LLVM.Global "printString"
     , LLVM.declArgs = [LLVM.Pointer (LLVM.I 8)]
+    }
+  , LLVM.Decl
+    { LLVM.declType = LLVM.Pointer (LLVM.I 8)
+    , LLVM.declName = LLVM.Global "calloc"
+    , LLVM.declArgs = [LLVM.I 32, LLVM.I 32]
     }
   ]
 
