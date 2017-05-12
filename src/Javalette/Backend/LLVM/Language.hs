@@ -16,10 +16,11 @@ module Javalette.Backend.LLVM.Language
   , TermInstr(..)
   , Instruction(..)
   , Comparison(..)
-  , Reg(..)
+--  , Reg(..)
   , Operand
   , Val(..)
   , Op(..)
+  , ExtDecl(..)
   ) where
 
 import Prelude hiding (EQ)
@@ -27,12 +28,26 @@ import Javalette.PrettyPrint
 
 data Prog = Prog
   { pGlobals   :: [GlobalVar]
+  , pTypeDecls :: [(Name, Type)]
   , pDecls     :: [Decl]
   , pDefs      :: [Def]
+  , pExtDecls  :: [ExtDecl]
   } deriving (Show)
 
 instance Pretty Prog where
-  pPrint (Prog gVars decls defs) = pPrint gVars $$ pPrint decls $$ pPrint defs
+  pPrint (Prog gVars tDecls decls defs extDecls)
+    =  pPrint gVars
+    $$ vcat (map eqls tDecls)
+    $$ pPrint decls
+    $$ pPrint defs
+    $$ vcat (map pPrint extDecls)
+    where
+      eqls (n, t) = pPrint n <+> char '=' <+> pPrint t
+
+data ExtDecl = ExtDecl deriving (Show)
+
+instance Pretty ExtDecl where
+  pPrint decl = undefined
 
 data GlobalVar = GlobalVar
   { gvName :: Name
@@ -45,13 +60,19 @@ instance Pretty GlobalVar where
     = pPrint nm <+> char '=' <+> text "global" <+> pPrint tp <+> pPrint val
   pPrintList _lvl xs = vcat (map pPrint xs)
 
-newtype Name = Name String deriving (Show)
+-- TODO Rename constructor `Name` to `Global`.
+data Name = Global String | Local String deriving (Show, Eq, Ord)
 
 instance Pretty Name where
-  pPrint (Name s) = char '@' <> text s
+  pPrint n = case n of
+    Global s -> char '@' <> text s
+    Local s -> char '%' <> text s
 
-quoted :: String -> Doc
-quoted s = char '"' <+> text s <+> char '"'
+-- newtype Reg = Reg String deriving (Show)
+-- type Reg = Name
+
+--instance Pretty Reg where
+--  pPrint (Reg n) = char '%' <> text n
 
 data Type
   = Void
@@ -59,7 +80,9 @@ data Type
   | Double
   | Pointer Type
   | Array Int Type
-  deriving (Show)
+  | Struct [Type]
+  | TypeAlias Name
+  deriving (Show, Eq, Ord)
 
 instance Pretty Type where
   pPrint t = case t of
@@ -68,6 +91,8 @@ instance Pretty Type where
     Double -> text "double"
     Pointer t0 -> pPrint t0 <> char '*'
     Array n t' -> brackets (int n <+> char 'x' <+> pPrint t')
+    Struct tps -> text "type" <+> braces (hsepBy (char ',') (map pPrint tps))
+    TypeAlias n -> pPrint n
 
 newtype Constant = Constant String deriving (Show)
 
@@ -85,7 +110,7 @@ instance Pretty Decl where
     <> parens (hsepBy (char ',') (map pPrint args))
   pPrintList _lvl xs = vcat (map pPrint xs)
 
-data Arg = Arg Type Reg deriving (Show)
+data Arg = Arg Type Name deriving (Show)
 
 instance Pretty Arg where
   pPrint (Arg t n) = pPrint t <+> pPrint n
@@ -133,16 +158,18 @@ data TermInstr
   deriving (Show)
 
 data Instruction
-  = BinOp Op Type Operand Operand Reg
+  = BinOp Op Type Operand Operand Name
   -- | Memory access
-  | Alloca Type Reg
-  | Load Type Type Reg Reg
-  | GetElementPtr Type Type Name [(Type, Int)] Reg
-  | Store Type Operand Type Reg
+  | Alloca Type Name
+  -- TODO merge with above
+  | AllocaReg Name Name
+  | Load Type Type Name Name
+  | GetElementPtr Type Type Name [(Type, Int)] Name
+  | Store Type Operand Type Name
   -- | Misc.
-  | Icmp Comparison Type Operand Operand Reg
-  | Fcmp Comparison Type Operand Operand Reg
-  | Call Type Name [(Type, Operand)] Reg
+  | Icmp Comparison Type Operand Operand Name
+  | Fcmp Comparison Type Operand Operand Name
+  | Call Type Name [(Type, Operand)] Name
   | CallVoid Type Name [(Type, Operand)]
   | Commented Instruction
   | Comment String
@@ -183,7 +210,7 @@ instance Pretty Comparison where
     OGE -> "oge"
     ONE -> "one"
 
-type Operand = Either Reg Val
+type Operand = Either Name Val
 
 pPrintOp :: Operand -> Doc
 pPrintOp = either pPrint pPrint
@@ -195,14 +222,10 @@ instance Pretty Val where
     ValInt i -> int i
     ValDoub d -> double d
 
-newtype Reg = Reg String deriving (Show)
-
-instance Pretty Reg where
-  pPrint (Reg n) = char '%' <> text n
-
 instance Pretty Instruction where
   pPrint i = case i of
     Alloca tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
+    AllocaReg tp nm -> pPrint nm <+> char '=' <+> text "alloca" <+> pPrint tp
     Load ty0 ty1 regSrc regTrg
       -> pPrint regTrg <+> char '=' <+> text "load"
       <+> pPrint ty0 <> char ',' <+> pPrint ty1 <+> pPrint regSrc
@@ -260,7 +283,7 @@ instance Pretty TermInstr where
     CommentedT i' -> char ';' <+> pPrint i'
 
 prettyBinInstr
-  :: Doc -> Type -> Operand -> Operand -> Reg -> Doc
+  :: Doc -> Type -> Operand -> Operand -> Name -> Doc
 prettyBinInstr s tp op0 op1 reg
       = pPrint reg <+> char '='
       <+> s <+> pPrint tp
