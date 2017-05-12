@@ -37,17 +37,20 @@ data Prog = Prog
 instance Pretty Prog where
   pPrint (Prog gVars tDecls decls defs extDecls)
     =  pPrint gVars
-    $$ vcat (map eqls tDecls)
-    $$ pPrint decls
-    $$ pPrint defs
-    $$ vcat (map pPrint extDecls)
+    $$$ pPrint decls
+    $$$ vcat (map eqls tDecls)
+    $$$ pPrint defs
+    $$$ vcat (map pPrint extDecls)
     where
       eqls (n, t) = pPrint n <+> char '=' <+> pPrint t
 
-data ExtDecl = ExtDecl deriving (Show)
+($$$) :: Doc -> Doc -> Doc
+a $$$ b = a $+$ text "" $+$ b
+
+data ExtDecl = ExtDecl Type Name [Type] deriving (Show)
 
 instance Pretty ExtDecl where
-  pPrint decl = undefined
+  pPrint (ExtDecl t n args) = text "declare" <+> pPrint t <+> pPrint n <> parens (hsepBy (char ',') (map pPrint args))
 
 data GlobalVar = GlobalVar
   { gvName :: Name
