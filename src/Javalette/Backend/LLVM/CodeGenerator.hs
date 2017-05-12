@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ViewPatterns #-}
 module Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
@@ -18,6 +19,10 @@ import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
+
+import Debug.Trace
+
+tracePrettyId x = trace (prettyShow x) x
 
 data CompilerErr = Generic String | Impossible String | TypeError String
 
@@ -133,7 +138,7 @@ type MonadCompile m =
   )
 
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
-compileProg = runExcept . compileProgM . rename
+compileProg = runExcept . compileProgM . tracePrettyId . rename
 
 compileProgM :: MonadError CompilerErr m => Jlt.Prog -> m LLVM.Prog
 compileProgM (Jlt.Program defs) = do
@@ -371,7 +376,7 @@ emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
   => Jlt.LValue -> Jlt.Expr -> m ()
-assign lv e = case lv of
+assign (traceShowId -> lv) (traceShowId -> e) = emitComment "assign" >> case lv of
   Jlt.LIdent i -> do
     op <- resultOfExpression e
     let reg = trNameToReg i
@@ -381,11 +386,23 @@ assign lv e = case lv of
     let reg = trNameToReg i
     idxLLVM <- typeValueOfIndex idx
     r0 <- newReg
-    let tpElems = tpLLVM
+    r1 <- newReg
+    tpStructLLVM
+      <- fmap LLVM.TypeAlias
+      . lookupNameOfTypeErr undefined
+      . trType
+      . Jlt.Array
+      . typeof
+      $ e
+    let leIndex = fmap intVal idxLLVM
+        tpArrayLLVM = stub
+        tpElems = LLVM.I 32
     emitInstructions
-      [ LLVM.GetElementPtr tpLLVM (LLVM.Pointer tpLLVM) reg
-        [(LLVM.I 32, 0), (LLVM.I 32, 1), fmap intVal idxLLVM] r0
-      , LLVM.Store tpElems op (LLVM.Pointer tpElems) r0
+      [ LLVM.GetElementPtr tpStructLLVM (LLVM.Pointer tpStructLLVM) reg
+        [(LLVM.I 32, 0), (LLVM.I 32, 1)] r0
+      , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
+        [(LLVM.I 32, 0), leIndex] r1
+      , LLVM.Store tpElems op (LLVM.Pointer tpElems) r1
       ]
   where
     tpJlt = typeof e
@@ -393,6 +410,11 @@ assign lv e = case lv of
     -- TODO: It seems we need to let `GetElementPtr` accept "operands"
     intVal :: LLVM.Operand -> Int
     intVal (Right (LLVM.ValInt i)) = i
+    stub = dynIntArray
+    dynIntArray = LLVM.Array 0 (LLVM.I 32)
+
+emitComment :: MonadWriter [AlmostInstruction] m => String -> m ()
+emitComment s = emitInstructions [LLVM.Comment s]
 
 typeValueOfIndex :: MonadCompile m => Jlt.Index -> m (LLVM.Type, LLVM.Operand)
 typeValueOfIndex (Jlt.Indx e) = do
@@ -424,10 +446,10 @@ cond e t f = do
 itemInit
   :: MonadCompile m
   => Jlt.Type -> Jlt.Item -> m ()
-itemInit jltType itm = do
+itemInit (traceShowId -> jltType) (traceShowId -> itm) = emitComment "init" >> do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
-      tp = trType jltType
+      tp = trType (traceShowId jltType)
       reg :: LLVM.Name
       reg = trIdent . itemName $ itm
   case itm of
@@ -546,7 +568,7 @@ trType t = case t of
     $  "The string type cannot be translated directly. "
     ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
-  Jlt.Array t0 -> LLVM.Struct [LLVM.I 32, trType t0]
+  Jlt.Array t0 -> LLVM.Struct [LLVM.I 32, LLVM.Array 0 (trType t0)]
 
 builtinDecls :: [LLVM.Decl]
 builtinDecls =
