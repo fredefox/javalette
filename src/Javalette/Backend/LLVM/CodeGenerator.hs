@@ -308,10 +308,6 @@ sepBy p d = synth . foldl go ((d, []), [])
       else ((a, as ++ [x]), acc)
     synth (prev, acc) = acc ++ [prev]
 
--- "Type synonyms cannot be partially-applied"
--- From: http://stackoverflow.com/a/9289928/1021134
--- But this is also the type:
---     Jlt.Stmt -> WriterT AlmostInstruction Compiler ()
 trStmt
   :: MonadCompile m
   => LLVM.Label -> Jlt.Stmt -> m ()
@@ -376,7 +372,7 @@ emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
   => Jlt.LValue -> Jlt.Expr -> m ()
-assign (traceShowId -> lv) (traceShowId -> e) = emitComment "assign" >> case lv of
+assign lv e = emitComment "assign" >> case lv of
   Jlt.LIdent i -> do
     op <- resultOfExpression e
     let reg = trNameToReg i
@@ -387,9 +383,9 @@ assign (traceShowId -> lv) (traceShowId -> e) = emitComment "assign" >> case lv 
     idxLLVM <- typeValueOfIndex idx
     r0 <- newReg
     r1 <- newReg
-    tpStructLLVM
-      <- fmap LLVM.TypeAlias
-      . lookupNameOfTypeErr undefined
+    tpStructLLVM <- return
+--      <- fmap LLVM.TypeAlias
+--      . lookupNameOfTypeErr undefined
       . trType
       . Jlt.Array
       . typeof
@@ -399,9 +395,9 @@ assign (traceShowId -> lv) (traceShowId -> e) = emitComment "assign" >> case lv 
         tpElems = LLVM.I 32
     emitInstructions
       [ LLVM.GetElementPtr tpStructLLVM (LLVM.Pointer tpStructLLVM) reg
-        [(LLVM.I 32, 0), (LLVM.I 32, 1)] r0
+        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
       , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
-        [(LLVM.I 32, 0), leIndex] r1
+        [(LLVM.I 32, intOp 0), idxLLVM] r1
       , LLVM.Store tpElems op (LLVM.Pointer tpElems) r1
       ]
   where
@@ -412,6 +408,9 @@ assign (traceShowId -> lv) (traceShowId -> e) = emitComment "assign" >> case lv 
     intVal (Right (LLVM.ValInt i)) = i
     stub = dynIntArray
     dynIntArray = LLVM.Array 0 (LLVM.I 32)
+
+intOp :: Int -> LLVM.Operand
+intOp = Right . LLVM.ValInt
 
 emitComment :: MonadWriter [AlmostInstruction] m => String -> m ()
 emitComment s = emitInstructions [LLVM.Comment s]
@@ -446,7 +445,7 @@ cond e t f = do
 itemInit
   :: MonadCompile m
   => Jlt.Type -> Jlt.Item -> m ()
-itemInit (traceShowId -> jltType) (traceShowId -> itm) = emitComment "init" >> do
+itemInit jltType itm = emitComment "init" >> do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
       tp = trType (traceShowId jltType)
@@ -482,7 +481,7 @@ arrayInit structTp arrayElemTp array len = do
   r0 <- newReg
   r1 <- newReg
   structTpDecl <- declareType structTp
-  emitInstructions [ LLVM.AllocaReg structTpDecl array ]
+  emitInstructions [ LLVM.Alloca structTp array ]
   lengthOfArrayLLVM structTp array r0
   emitInstructions
     [ LLVM.Store (LLVM.I 32) len (LLVM.Pointer (LLVM.I 32)) r0
@@ -514,8 +513,8 @@ lookupNameOfTypeErr e t = do
 lengthOfArrayLLVM :: MonadCompile m
   => LLVM.Type -> LLVM.Name -> LLVM.Name -> m ()
 lengthOfArrayLLVM t n0 n1 = do
-  n <- LLVM.TypeAlias <$> lookupNameOfTypeErr undefined t
-  emitInstructions [ LLVM.GetElementPtr n (LLVM.Pointer n) n0 [(LLVM.I 32, 0), (LLVM.I 32, 0)] n1 ]
+  n <- return t -- LLVM.TypeAlias <$> lookupNameOfTypeErr undefined t
+  emitInstructions [ LLVM.GetElementPtr n (LLVM.Pointer n) n0 [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] n1 ]
 
 varInit
   :: MonadCompile m
@@ -712,18 +711,23 @@ resultOfExpressionTp tp e = case e of
     sReg <- lookupString s
     r <- newReg
     let tp' = stringType s
-        path = [(LLVM.I 32, 0), (LLVM.I 32, 0)]
+        path = [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)]
     emitInstructions [LLVM.GetElementPtr tp' (LLVM.Pointer tp') sReg path r]
     return (Left r)
   Jlt.Dot e0 (Jlt.Ident i) -> do
-    Left r <- resultOfExpression e0
+    -- `r` is a pointer to an array.
+    Left r <- resultOfExpression (traceShowId e0)
     unless (i == "length") (throwError (Generic $ "IMPOSSIBLE: " ++ i))
     r0 <- newReg
-    emitInstructions [ LLVM.GetElementPtr tpLLVM (LLVM.Pointer tpLLVM) r [(LLVM.I 32, 0), (LLVM.I 32, 0)] r0 ]
+    let tpArrayLLVM = trType $ typeof e0
+    emitInstructions
+      [ LLVM.ExtractValue tpArrayLLVM r
+        [intOp 0] r0
+      ]
     return (Left r0)
   Jlt.EIndex e0 idx -> return (Left (LLVM.Local "ohno"))
   where
-    tpLLVM = trType tp
+    tpLLVM = traceShowId $ trType (traceShowId tp)
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of

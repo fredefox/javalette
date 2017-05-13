@@ -39,7 +39,7 @@ instance Pretty Prog where
     $$$ vcat (map eqls tDecls)
     $$$ pPrint defs
     where
-      eqls (n, t) = pPrint n <+> char '=' <+> pPrint t
+      eqls (n, t) = pPrint n <+> char '=' <+> text "type" <+> pPrint t
 
 ($$$) :: Doc -> Doc -> Doc
 a $$$ b = a $+$ text "" $+$ b
@@ -86,7 +86,7 @@ instance Pretty Type where
     Double -> text "double"
     Pointer t0 -> pPrint t0 <> char '*'
     Array n t' -> brackets (int n <+> char 'x' <+> pPrint t')
-    Struct tps -> text "type" <+> braces (hsepBy (char ',') (map pPrint tps))
+    Struct tps -> braces (hsepBy (char ',') (map pPrint tps))
     TypeAlias n -> pPrint n
 
 newtype Constant = Constant String deriving (Show)
@@ -159,7 +159,8 @@ data Instruction
   -- TODO merge with above
   | AllocaReg Name Name
   | Load Type Type Name Name
-  | GetElementPtr Type Type Name [(Type, Int)] Name
+  | GetElementPtr Type Type Name [(Type, Operand)] Name
+  | ExtractValue Type Name [Operand] Name
   | Store Type Operand Type Name
   -- | Misc.
   | Icmp Comparison Type Operand Operand Name
@@ -242,6 +243,10 @@ instance Pretty Instruction where
       pPrint trg <+> char '=' <+>
       text "getelementptr" <+> pPrint tp0 <> char ',' <+> pPrint tp1 <+>
       pPrint nm <> char ',' <+> printArgs args
+    ExtractValue tp0 nm args trg ->
+      pPrint trg <+> char '=' <+>
+      text "extractvalue" <+> pPrint tp0 <+>
+      pPrint nm <> char ',' <+> hsepBy (char ',') (map pPrintOp args)
     Commented i' -> char ';' <+> pPrint i'
     Comment s -> char ';' <+> text s
 
@@ -260,10 +265,10 @@ instance Pretty Op where
     Or -> "or"
     Xor -> "xor"
 
-printArgs :: [(Type, Int)] -> Doc
+printArgs :: [(Type, Operand)] -> Doc
 printArgs = hsepBy (char ',') . map arg
   where
-    arg (t, i) = pPrint t <+> int i
+    arg (t, op) = pPrint t <+> pPrintOp op
 
 instance Pretty TermInstr where
   pPrint i = case i of
