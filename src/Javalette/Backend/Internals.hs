@@ -1,13 +1,24 @@
+{-# LANGUAGE GADTs #-}
 module Javalette.Backend.Internals
   ( Backend(..)
-  , runBackend
+  , Backend'(..)
+  , mkBackend
   ) where
+
+import Options.Applicative.Types
 
 import Javalette.Syntax as AST
 
-newtype Backend = Backend
-  { compiler :: FilePath -> AST.Prog -> IO ()
+data Backend where
+  Backend :: Backend' opts -> Backend
+
+data Backend' opts = Backend'
+  { runBackend     :: opts -> FilePath -> AST.Prog -> IO ()
+  , backendOptions :: Parser opts
   }
 
-runBackend :: FilePath -> AST.Prog -> Backend -> IO ()
-runBackend fp p b = compiler b fp p
+-- | Provides a clean interface to creating a publicly consumable backend, but
+-- we lose the nicety of having record syntax
+mkBackend
+  :: (opts -> FilePath -> Prog -> IO ()) -> Parser opts -> Backend
+mkBackend run opts = Backend (Backend' run opts)
