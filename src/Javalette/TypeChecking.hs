@@ -250,16 +250,16 @@ typecheckStmt t s = case s of
     unless (tLval == te)
       $ throwError TypeMismatch
     return (Ass lval' e')
-  Incr i         -> do
-    t' <- lookupTypeVar i
-    unless (isNumeric t')
-      $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t')))
-  Decr i         -> do
-    t' <- lookupTypeVar i
-    unless (isNumeric t')
-      $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t')))
+  Incr i         -> -- do
+    -- t' <- lookupTypeVar i
+    -- unless (isNumeric t')
+    --   $ throwError TypeMismatch
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t)))
+  Decr i         -> -- do
+    -- t' <- lookupTypeVar i
+    -- unless (isNumeric t')
+    --   $ throwError TypeMismatch
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t)))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -285,13 +285,20 @@ typecheckStmt t s = case s of
     unless (isVoid t')
       $ throwError (GenericError "Expression statements must be void")
     return e'
-  For t0 i e s0 -> withNewScope $ do
-    (e', t') <- infer e
-    addBinding i t0
-    unless (arrayOfType t' t0)
-      $ throwError (GenericError "Iterator/iteratee type mismatch")
-    s0' <- typecheckStmt t s0
-    return (For t0 i e' s0')
+  -- For t0 i e s0 -> withNewScope $ do
+  --   (e', t') <- infer e
+  --   addBinding i t0
+  --   unless (arrayOfType t' t0)
+  --     $ throwError (GenericError "Iterator/iteratee type mismatch")
+  --   s0' <- typecheckStmt t s0
+  --   return (For t0 i e' s0')
+  For t0 i e s0 ->
+    typecheckStmt t ( BStmt (Block
+        [ Decl t0 [Init i (ELitInt 0)]
+        , While (ERel (EVar i) LTH (Dot e (Ident "length"))) (BStmt (Block [s0, Incr i]))
+        ]
+        ))
+
 
 lookupTypeLValue :: LValue -> TypeChecker (Type, LValue)
 lookupTypeLValue lv = case lv of

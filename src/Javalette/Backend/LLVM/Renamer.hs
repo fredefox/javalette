@@ -129,6 +129,16 @@ rStmtM s = case s of
   While e s0 -> While <$> rExprM e <*> rStmtM s0
   SExp e -> SExp <$> rExprM e
   For t i e s0 -> For t <$> renameIdent i <*> rExprM e <*> rStmtM s0
+  -- For t i e s0 -> do
+  --   i' <- renameIdent i
+  --   e' <- rExprM e
+  --   s0' <- rStmtM s0
+  --   return ( BStmt (Block
+  --     [ Decl t [Init i' (ELitInt 0)]
+  --     , While (ERel (EVar i') LTH (Dot e' (Ident "length"))) s0'
+  --     , Ass (LIdent i') (EAdd (EVar i) Plus (ELitInt 1))
+  --     ]
+  --     ))
 
 rItemM :: Item -> R Item
 rItemM itm = case itm of

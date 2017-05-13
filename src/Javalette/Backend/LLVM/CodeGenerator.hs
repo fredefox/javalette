@@ -350,6 +350,7 @@ trStmt fallThrough s = case s of
     jumpTo lblCond
     emitLabel lblAfterAWhile
   Jlt.SExp e -> void $ resultOfExpression e
+  Jlt.For{} -> undefined
   where
     cont = trStmt fallThrough
 
