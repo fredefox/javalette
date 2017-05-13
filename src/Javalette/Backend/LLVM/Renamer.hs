@@ -128,6 +128,7 @@ rStmtM s = case s of
   CondElse e s0 s1 -> CondElse <$> rExprM e <*> rStmtM s0 <*> rStmtM s1
   While e s0 -> While <$> rExprM e <*> rStmtM s0
   SExp e -> SExp <$> rExprM e
+  For t i e s0 -> For t <$> renameIdent i <*> rExprM e <*> rStmtM s0
 
 rItemM :: Item -> R Item
 rItemM itm = case itm of
