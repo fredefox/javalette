@@ -721,11 +721,15 @@ resultOfExpressionTp tp e = case e of
       ]
     return (Left r0)
   Jlt.EIndex e0 idx -> do
-    r <- resultOfExpression e0
+    Left r <- resultOfExpression e0
     (t, v) <- typeValueOfIndex idx
-    return (Left (LLVM.Local "ohno"))
-  where
-    tpLLVM = trType tp
+    r0 <- newReg
+    let tpArrayLLVM = trType $ typeof e0
+    emitInstructions
+      [ LLVM.ExtractValue tpArrayLLVM r
+        [intOp 1, v] r0
+      ]
+    return (Left r0)
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
