@@ -79,6 +79,7 @@ class TypeCheck a => Infer a where
 data Env = Env
   { envVars :: [Map Ident Type]
   , envDefs :: Definitions
+  , countIterators :: Int
   } deriving (Show)
 
 type Definitions = Map Ident Definition
@@ -95,6 +96,15 @@ modifyVars f e = e { envVars = f (envVars e) }
 -- definitions.
 modifyDefs :: (Definitions -> Definitions) -> Env -> Env
 modifyDefs f e = e { envDefs = f (envDefs e) }
+
+incrCountIterators :: TypeChecker Int
+incrCountIterators = do
+  i <- gets countIterators
+  modify (\s -> s { countIterators = succ i })
+  return i
+
+newCountIterator :: TypeChecker Ident
+newCountIterator = Ident . ("__iterator__" ++) . show <$> incrCountIterators
 
 -- | The control-structure used for typechecking.
 type TypeChecker a = StateT Env (Except TypeCheckingError) a
@@ -115,6 +125,7 @@ initEnv :: Env
 initEnv = Env
   { envVars = []
   , envDefs = wiredInDefs
+  , countIterators = 0
   }
 
 -- NOTE Do we wanne refer to the types defined by the AST or do we want to
@@ -250,16 +261,17 @@ typecheckStmt t s = case s of
     unless (tLval == te)
       $ throwError TypeMismatch
     return (Ass lval' e')
-  Incr i         -> -- do
-    -- t' <- lookupTypeVar i
-    -- unless (isNumeric t')
-    --   $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t)))
-  Decr i         -> -- do
-    -- t' <- lookupTypeVar i
-    -- unless (isNumeric t')
-    --   $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t)))
+  -- TODO We should be able to just desugar at this step.
+  Incr i         -> do
+    t' <- lookupTypeVar i
+    unless (isNumeric t')
+      $ throwError TypeMismatch
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t')))
+  Decr i         -> do
+    t' <- lookupTypeVar i
+    unless (isNumeric t')
+      $ throwError TypeMismatch
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -292,10 +304,22 @@ typecheckStmt t s = case s of
   --     $ throwError (GenericError "Iterator/iteratee type mismatch")
   --   s0' <- typecheckStmt t s0
   --   return (For t0 i e' s0')
-  For t0 i e s0 ->
-    typecheckStmt t ( BStmt (Block
-        [ Decl t0 [Init i (ELitInt 0)]
-        , While (ERel (EVar i) LTH (Dot e (Ident "length"))) (BStmt (Block [s0, Incr i]))
+  For t0 i e s0 -> do
+    noSugar <- desugarFor t0 i e s0
+    typecheckStmt t noSugar
+
+-- | Desugars a for-loop.
+desugarFor :: Type
+     -> Ident
+     -> Expr
+     -> Stmt
+     -> StateT Env (Except TypeCheckingError) Stmt
+desugarFor t0 i e s0 = do
+    iterator <- newCountIterator
+    let whlbd = [Decl t0 [Init i (EIndex e (Indx (EVar iterator)))], Incr iterator , s0]
+    return ( BStmt (Block
+        [ Decl Int [Init iterator (ELitInt 0)]
+        , While (ERel (EVar iterator) LTH (Dot e (Ident "length"))) (BStmt (Block whlbd))
         ]
         ))
 
@@ -308,7 +332,7 @@ lookupTypeLValue lv = case lv of
   LIndexed i idx -> do
     t <- lookupTypeVar i
     (idx', tp) <- inferIndex idx
-    unless (tp == Int) $ throwError $ GenericError $ "Indexes must be integers"
+    unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
     case t of
       Array t' -> return (t', LIndexed i idx')
       _     -> throwError (GenericError "Cannot index into non-array type")

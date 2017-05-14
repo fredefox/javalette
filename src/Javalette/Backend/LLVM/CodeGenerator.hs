@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ViewPatterns #-}
 module Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
@@ -13,16 +12,11 @@ import Control.Monad.Reader
 import Data.Map (Map)
 import qualified Data.Map as M
 import qualified Control.Exception as E
-import qualified Data.Set as S
 
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
-
-import Debug.Trace
-
-tracePrettyId x = trace (prettyShow x) x
 
 data CompilerErr = Generic String | Impossible String | TypeError String
 
@@ -138,7 +132,7 @@ type MonadCompile m =
   )
 
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
-compileProg = runExcept . compileProgM . tracePrettyId . rename
+compileProg = runExcept . compileProgM . rename
 
 compileProgM :: MonadError CompilerErr m => Jlt.Prog -> m LLVM.Prog
 compileProgM (Jlt.Program defs) = do
@@ -350,7 +344,7 @@ trStmt fallThrough s = case s of
     jumpTo lblCond
     emitLabel lblAfterAWhile
   Jlt.SExp e -> void $ resultOfExpression e
-  Jlt.For{} -> undefined
+  Jlt.For{} -> impossibleRemoved
   where
     cont = trStmt fallThrough
 
@@ -449,7 +443,7 @@ itemInit
 itemInit jltType itm = emitComment "init" >> do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
-      tp = trType (traceShowId jltType)
+      tp = trType jltType
       reg :: LLVM.Name
       reg = trIdent . itemName $ itm
   case itm of
@@ -717,7 +711,7 @@ resultOfExpressionTp tp e = case e of
     return (Left r)
   Jlt.Dot e0 (Jlt.Ident i) -> do
     -- `r` is a pointer to an array.
-    Left r <- resultOfExpression (traceShowId e0)
+    Left r <- resultOfExpression e0
     unless (i == "length") (throwError (Generic $ "IMPOSSIBLE: " ++ i))
     r0 <- newReg
     let tpArrayLLVM = trType $ typeof e0
@@ -728,7 +722,7 @@ resultOfExpressionTp tp e = case e of
     return (Left r0)
   Jlt.EIndex e0 idx -> return (Left (LLVM.Local "ohno"))
   where
-    tpLLVM = traceShowId $ trType (traceShowId tp)
+    tpLLVM = trType tp
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
