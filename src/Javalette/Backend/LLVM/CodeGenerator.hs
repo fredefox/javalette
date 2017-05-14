@@ -666,25 +666,45 @@ resultOfExpressionTp tp e = case e of
     return (Left r)
   Jlt.Dot e0 (Jlt.Ident i) -> do
     -- `r` is a pointer to an array.
-    Left r <- resultOfExpression e0
+    is <- execWriterT $ resultOfExpression e0
     unless (i == "length") (throwError (Generic $ "IMPOSSIBLE: " ++ i))
-    r0 <- newReg
-    let tpArrayLLVM = trType $ typeof e0
-    emitInstructions
-      [ LLVM.ExtractValue tpArrayLLVM r
-        [intOp 0] r0
-      ]
-    return (Left r0)
+    -- let tpArrayLLVM = trType $ typeof e0
+    lastLoadToGep (const (LLVM.I 32)) [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] is
+    --   [ LLVM.ExtractValue tpArrayLLVM r
+    --     [intOp 0] r0
+    --   ]
   Jlt.EIndex e0 idx -> do
-    Left r <- resultOfExpression e0
-    (t, v) <- typeValueOfIndex idx
-    r0 <- newReg
-    let tpArrayLLVM = trType $ typeof e0
-    emitInstructions
-      [ LLVM.ExtractValue tpArrayLLVM r
-        [intOp 1, v] r0
-      ]
-    return (Left r0)
+    is <- execWriterT $ resultOfExpression e0
+    (_, v) <- typeValueOfIndex idx
+    -- r0 <- newReg
+    -- let tpArrayLLVM = trType $ typeof e0
+    lastLoadToGep elemTpLLVM [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1), (LLVM.I 32, v)] is
+      -- [ LLVM.ExtractValue tpArrayLLVM r
+      --   [intOp 1, v] r0
+      -- ]
+
+splitLast :: [t] -> Maybe ([t], t)
+splitLast [] = Nothing
+splitLast [x] = Just ([], x)
+splitLast (x:xs) = do
+  (xs', l) <- splitLast xs
+  return (x:xs', l)
+
+-- | This is sort of a hack.
+lastLoadToGep :: MonadCompile m
+  => (LLVM.Type -> LLVM.Type)
+  -> [(LLVM.Type, LLVM.Operand)] -> [AlmostInstruction] -> m LLVM.Operand
+lastLoadToGep f ops is = do
+  r <- newReg
+  tell $ case splitLast is of
+    Just (xs, Instr (LLVM.Load t0 t1 n0 n1)) -> let tp = f t0 in xs ++ map Instr [LLVM.GetElementPtr t0 t1 n0 ops n1, LLVM.Load tp (LLVM.Pointer tp) n1 r]
+    _ -> error "Last instruction was not load :("
+  return (Left r)
+
+-- | Grabs the llvm-type from the llvm-representation of an array.
+elemTpLLVM :: LLVM.Type -> LLVM.Type
+elemTpLLVM (LLVM.Struct [_, (LLVM.Array _ t)]) = t
+elemTpLLVM _ = undefined
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
