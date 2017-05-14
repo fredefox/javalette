@@ -160,6 +160,7 @@ collectStringsStmt s = case s of
     ]
   Jlt.While e s0 -> collectStringsExpr e ++ collectStringsStmt s0
   Jlt.SExp e -> collectStringsExpr e
+  Jlt.For{} -> impossibleRemoved
 
 collectStringsItem :: Jlt.Item -> [String]
 collectStringsItem i = case i of
