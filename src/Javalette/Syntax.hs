@@ -45,6 +45,12 @@ instance Pretty MulOp where
 instance Pretty RelOp where
   pPrint = pPrintConv
 
+instance Pretty LValue where
+  pPrint = pPrintConv
+
+instance Pretty Index where
+  pPrint = pPrintConv
+
 -- | Any type that implements `Print` can implement `pPrint` with this.
 pPrintConv :: Print a => a -> Doc
 pPrintConv = text . printTree

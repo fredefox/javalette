@@ -720,7 +720,10 @@ resultOfExpressionTp tp e = case e of
         [intOp 0] r0
       ]
     return (Left r0)
-  Jlt.EIndex e0 idx -> return (Left (LLVM.Local "ohno"))
+  Jlt.EIndex e0 idx -> do
+    r <- resultOfExpression e0
+    (t, v) <- typeValueOfIndex idx
+    return (Left (LLVM.Local "ohno"))
   where
     tpLLVM = trType tp
 

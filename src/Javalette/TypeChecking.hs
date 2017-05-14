@@ -331,16 +331,18 @@ lookupTypeLValue lv = case lv of
     return (t, lv)
   LIndexed i idx -> do
     t <- lookupTypeVar i
-    (idx', tp) <- inferIndex idx
+    (idx', tp) <- infer idx
     unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
     case t of
       Array t' -> return (t', LIndexed i idx')
       _     -> throwError (GenericError "Cannot index into non-array type")
 
-inferIndex :: Index -> TypeChecker (Index, Type)
-inferIndex (Indx e) = do
-  (e', t) <- infer e
-  return (Indx e', t)
+instance TypeCheck Index where
+instance Infer Index where
+  infer (Indx e) = do
+    (e', t) <- infer e
+    unless (t == Int) $ throwError $ GenericError "Index must be integer"
+    return (Indx e', t)
 
 one :: Type -> Expr
 one t = case t of
@@ -490,8 +492,9 @@ instance Infer Expr where
     Dot e0 i -> typeOfDot e0 i
     EIndex e0 idx -> do
       (e', t) <- infer e0
+      idx' <- typechk idx
       case t of
-        Array tElem -> return (EIndex e' idx, tElem)
+        Array tElem -> return (EIndex e' idx', tElem)
         _ -> throwError (GenericError "Can only index arrays")
 
 -- `typeOfDot` assumes that the only thing you can dot is the length of a list.
