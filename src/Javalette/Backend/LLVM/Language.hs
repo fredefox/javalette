@@ -27,19 +27,15 @@ import Javalette.PrettyPrint
 
 data Prog = Prog
   { pGlobals   :: [GlobalVar]
-  , pTypeDecls :: [(Name, Type)]
   , pDecls     :: [Decl]
   , pDefs      :: [Def]
   } deriving (Show)
 
 instance Pretty Prog where
-  pPrint (Prog gVars tDecls decls defs)
+  pPrint (Prog gVars decls defs)
     =  pPrint gVars
     $$$ pPrint decls
-    $$$ vcat (map eqls tDecls)
     $$$ pPrint defs
-    where
-      eqls (n, t) = pPrint n <+> char '=' <+> text "type" <+> pPrint t
 
 ($$$) :: Doc -> Doc -> Doc
 a $$$ b = a $+$ text "" $+$ b

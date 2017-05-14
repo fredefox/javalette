@@ -33,11 +33,7 @@ data Env = Env
   -- sequence.
   { counterLabels :: Int
   , counterRegs   :: Int
-  , counterTypes  :: Int
-  , structTypes   :: StructTypes
   } deriving (Show)
-
-type StructTypes = Map LLVM.Type LLVM.Name
 
 incrCounterLabels :: MonadState Env m => m Int
 incrCounterLabels = do
@@ -51,20 +47,6 @@ incrCounterRegs = do
   modify (\e -> e { counterRegs = succ lbl })
   return lbl
 
-incrCounterTypes :: MonadState Env m => m Int
-incrCounterTypes = do
-  lbl <- gets counterTypes
-  modify (\e -> e { counterTypes = succ lbl })
-  return lbl
-
-modifyTypes :: MonadCompile m => (StructTypes -> StructTypes) -> m ()
-modifyTypes f = modify m
-  where
-    m e = e { structTypes = f (structTypes e) }
-
-getTypes :: MonadCompile m => m StructTypes
-getTypes = gets structTypes
-
 newLabel :: MonadState Env m => m LLVM.Label
 newLabel = LLVM.Label . ('l':) . show <$> incrCounterLabels
 
@@ -74,9 +56,6 @@ newLabelNamed _ = newLabel
 
 newReg :: MonadCompile m => m LLVM.Name
 newReg = LLVM.Local . ('t':) . show <$> incrCounterRegs
-
-newTypeName :: MonadCompile m => m LLVM.Name
-newTypeName = LLVM.Local . ("tp" ++) . show <$> incrCounterTypes
 
 -- TODO We should traverse the ast, collect all strings, put them in a map
 -- and then declare them at the top of the llvm output. We should then lookup
@@ -90,7 +69,7 @@ lookupString s = do
     Just x -> return x
 
 emptyEnv :: Env
-emptyEnv = Env 0 0 0 mempty
+emptyEnv = Env 0 0
 
 instance Pretty CompilerErr where
   pPrint err = case err of
@@ -98,10 +77,8 @@ instance Pretty CompilerErr where
 
 type Compiler a
   = ReaderT ReadEnv
-    ( StateT StructTypes
-      ( WriterT [AlmostInstruction]
-        ( StateT Env (Except CompilerErr)
-        )
+    ( WriterT [AlmostInstruction]
+      ( StateT Env (Except CompilerErr)
       )
     ) a
 
@@ -140,10 +117,9 @@ compileProgM (Jlt.Program defs) = do
       declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
       defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
       re        = ReadEnv cs (M.fromList (declTypes ++ defTypes))
-  (pDefs, pTypeDecls) <- (`runStateT` mempty) $ mapM (trTopDef re) defs
+  pDefs <- mapM (trTopDef re) defs
   return LLVM.Prog
     { LLVM.pGlobals = map declString (M.toList cs)
-    , LLVM.pTypeDecls = map flp . M.toList $ pTypeDecls
     , LLVM.pDecls   = builtinDecls
     , LLVM.pDefs    = pDefs
     }
@@ -160,9 +136,6 @@ compileProgM (Jlt.Program defs) = do
     unname :: LLVM.Name -> String
     unname (LLVM.Global s) = s
     unname (LLVM.Local s) = s
-
-flp :: (t1, t) -> (t, t1)
-flp (a, b) = (b, a)
 
 collectStringsTopDef :: Jlt.TopDef -> [String]
 collectStringsTopDef (Jlt.FnDef _ _ _ b) = collectStringsBlk b
@@ -218,17 +191,15 @@ collectStringsIndex (Jlt.Indx e) = collectStringsExpr e
 
 trTopDef
   :: MonadError CompilerErr m
-  => MonadState StructTypes m
   => ReadEnv -> Jlt.TopDef -> m LLVM.Def
 trTopDef re (Jlt.FnDef t i args blk) = do
-  (bss, env) <- run $ do
+  bss <- run $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
     mapM_ cgArg args
     trBlk fallThrough blk
     emitLabel fallThrough
-  modify . M.union . structTypes $ env
   return LLVM.Def
     { LLVM.defType = trType t
     , LLVM.defName = trName i
@@ -236,7 +207,7 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     , LLVM.defBlks = almostToBlks bss
     }
   where
-    run = (`runStateT` emptyEnv) . execWriterT . (`runReaderT` re)
+    run = (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` re)
 
 trArg :: Jlt.Arg -> LLVM.Arg
 trArg (Jlt.Argument t i) = LLVM.Arg (trType t) (trNameToRegArg i)
@@ -475,7 +446,6 @@ arrayInit :: MonadCompile m => LLVM.Type -> LLVM.Type -> LLVM.Name -> LLVM.Opera
 arrayInit structTp arrayElemTp array len = do
   r0 <- newReg
   r1 <- newReg
-  structTpDecl <- declareType structTp
   emitInstructions [ LLVM.Alloca structTp array ]
   lengthOfArrayLLVM structTp array r0
   emitInstructions
@@ -488,22 +458,6 @@ arrayInit structTp arrayElemTp array len = do
     sizeOf t = Right $ LLVM.ValInt $ case t of
       LLVM.I n -> n `div` 8
       LLVM.Double -> 8
-
-declareType :: MonadCompile m => LLVM.Type -> m LLVM.Name
-declareType t = do
-  n <- newTypeName
-  modifyTypes (M.insert t n)
-  return n
-
-lookupNameOfType :: MonadCompile m => LLVM.Type -> m (Maybe LLVM.Name)
-lookupNameOfType t = M.lookup t <$> getTypes
-
-lookupNameOfTypeErr :: MonadCompile m => CompilerErr -> LLVM.Type -> m LLVM.Name
-lookupNameOfTypeErr e t = do
-  m <- M.lookup t <$> getTypes
-  case m of
-    Nothing -> throwError e
-    Just x -> return x
 
 lengthOfArrayLLVM :: MonadCompile m
   => LLVM.Type -> LLVM.Name -> LLVM.Name -> m ()
