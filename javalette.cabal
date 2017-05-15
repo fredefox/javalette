@@ -55,7 +55,7 @@ library
   default-language:    Haskell2010
 
 executable jlc
-  hs-source-dirs:      apps/compiler
+  hs-source-dirs:      apps/jlc
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
@@ -64,8 +64,8 @@ executable jlc
                      , optparse-applicative >= 0.13.2.0
   default-language:    Haskell2010
 
-executable javalette-parser
-  hs-source-dirs:      apps/parser
+executable jlp
+  hs-source-dirs:      apps/jlp
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
