@@ -28,9 +28,11 @@ NoInit.    Item ::= Ident ;
 
 Init.      Item ::= Ident "=" Expr ;
 
+InitObj.   Item ::= Ident "=" "new" Constructor ;
+
 separator nonempty Item "," ;
 
-Ass.       Stmt ::= Ident "=" Expr  ";" ;
+Ass.       Stmt ::= LValue "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
 
@@ -46,7 +48,17 @@ CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 
+For.       Stmt ::= "for" "(" Type Ident ":" Expr ")" Stmt ;
+
 SExp.      Stmt ::= Expr  ";" ;
+
+ArrayCon.  Constructor ::= Type "[" Expr "]" ;
+
+LIdent.    LValue ::= Ident ;
+
+LIndexed.  LValue ::= Ident Index ;
+
+Indx.      Index ::= "[" Expr "]" ;
 
 -- Types ---------------------------------------------------
 
@@ -57,6 +69,8 @@ Doub.      Type ::= "double" ;
 Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
+
+Array.     Type ::= Type "[]" ;
 
 internal   String. Type ::= "string" ;
 
@@ -83,6 +97,10 @@ EString.   Expr6 ::= String ;
 Neg.       Expr5 ::= "-" Expr6 ;
 
 Not.       Expr5 ::= "!" Expr6 ;
+
+Dot.       Expr5 ::= Expr6 "." Ident ;
+
+EIndex.    Expr5 ::= Expr6 Index;
 
 EMul.      Expr4 ::= Expr4 MulOp Expr5 ;
 

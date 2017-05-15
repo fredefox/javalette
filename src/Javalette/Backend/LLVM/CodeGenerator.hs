@@ -12,13 +12,25 @@ import Control.Monad.Writer
 import Control.Monad.Reader
 import Data.Map (Map)
 import qualified Data.Map as M
+import qualified Control.Exception as E
 
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
 
-data CompilerErr = Generic String deriving (Show)
+import Javalette.Debug
+
+data CompilerErr = Generic String | Impossible String | TypeError String
+
+instance Show CompilerErr where
+  show e = case e of
+    Generic s -> "ERROR: " ++ s
+    Impossible s -> "THE IMPOSSIBLE HAPPENED: " ++ s
+    TypeError s -> "TYPE ERROR: " ++ s
+
+instance E.Exception CompilerErr where
+
 data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.
@@ -45,8 +57,8 @@ newLabelNamed :: MonadCompile m => String -> m LLVM.Label
 -- newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
 newLabelNamed _ = newLabel
 
-newReg :: MonadCompile m => m LLVM.Reg
-newReg = LLVM.Reg . ('t':) . show <$> incrCounterRegs
+newReg :: MonadCompile m => m LLVM.Name
+newReg = LLVM.Local . ('t':) . show <$> incrCounterRegs
 
 -- TODO We should traverse the ast, collect all strings, put them in a map
 -- and then declare them at the top of the llvm output. We should then lookup
@@ -83,7 +95,7 @@ type Constants = Map String LLVM.Name
 type Functions = Map String [LLVM.Type]
 
 lookupFunction :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
-lookupFunction (LLVM.Name n) = do
+lookupFunction (LLVM.Global n) = do
   m <- asks envFunctions
   case M.lookup n m of
     Nothing -> throwError (Generic $ "Could not find function" ++ show n)
@@ -99,34 +111,34 @@ type MonadCompile m =
   , MonadReader ReadEnv m
   )
 
-runCompiler :: ReadEnv -> Compiler a -> Either CompilerErr [AlmostInstruction]
-runCompiler re = runExcept . (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` re)
-
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
-compileProg = aux . rename
+compileProg = runExcept . compileProgM . rename
+
+compileProgM :: MonadError CompilerErr m => Jlt.Prog -> m LLVM.Prog
+compileProgM (Jlt.Program defs) = do
+  let cs        = constantsMap $ concatMap collectStringsTopDef defs
+      declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
+      defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
+      re        = ReadEnv cs (M.fromList (declTypes ++ defTypes))
+  pDefs <- mapM (trTopDef re) defs
+  return LLVM.Prog
+    { LLVM.pGlobals = map declString (M.toList cs)
+    , LLVM.pDecls   = builtinDecls
+    , LLVM.pDefs    = pDefs
+    }
   where
-    aux (Jlt.Program defs) = do
-        let cs = constantsMap $ concatMap collectStringsTopDef defs
-            declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
-            defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
-            re = ReadEnv cs (M.fromList (declTypes ++ defTypes))
-        pDefs <- mapM (trTopDef re) defs
-        return LLVM.Prog
-          { LLVM.pGlobals = map declString (M.toList cs)
-          , LLVM.pDecls   = builtinDecls
-          , LLVM.pDefs    = pDefs
-          }
     constantsMap :: [String] -> Constants
     constantsMap xs = M.fromList . map (fmap intToReg) $ zip xs [0..]
     intToReg :: Int -> LLVM.Name
-    intToReg = LLVM.Name . (:) 's' . show
+    intToReg = LLVM.Global . (:) 's' . show
     declString :: (String, LLVM.Name) -> LLVM.GlobalVar
     declString (s, r) = LLVM.GlobalVar
       { LLVM.gvName = r , LLVM.gvType = stringType s , LLVM.gvVal = LLVM.Constant (s ++ "\00") }
     trArgType (Jlt.FnDef _ _ args _) = map argType args
     trTopDefName (Jlt.FnDef _ i _ _) = trName i
     unname :: LLVM.Name -> String
-    unname (LLVM.Name s) = s
+    unname (LLVM.Global s) = s
+    unname (LLVM.Local s) = s
 
 collectStringsTopDef :: Jlt.TopDef -> [String]
 collectStringsTopDef (Jlt.FnDef _ _ _ b) = collectStringsBlk b
@@ -151,11 +163,17 @@ collectStringsStmt s = case s of
     ]
   Jlt.While e s0 -> collectStringsExpr e ++ collectStringsStmt s0
   Jlt.SExp e -> collectStringsExpr e
+  Jlt.For{} -> impossibleRemoved
 
 collectStringsItem :: Jlt.Item -> [String]
 collectStringsItem i = case i of
   Jlt.NoInit{} -> []
   Jlt.Init _ e -> collectStringsExpr e
+  Jlt.InitObj _ c -> collectStringsCons c
+
+collectStringsCons :: Jlt.Constructor -> [String]
+collectStringsCons c = case c of
+  Jlt.ArrayCon _ e -> collectStringsExpr e
 
 collectStringsExpr :: Jlt.Expr -> [String]
 collectStringsExpr e = case e of
@@ -169,10 +187,17 @@ collectStringsExpr e = case e of
   Jlt.EAnd e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
   Jlt.EOr e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
   Jlt.EAnn _ e0 -> collectStringsExpr e0
+  Jlt.Dot e0 _ -> collectStringsExpr e0
+  Jlt.EIndex e0 idx -> collectStringsExpr e0 ++ collectStringsIndex idx
 
-trTopDef :: ReadEnv -> Jlt.TopDef -> Either CompilerErr LLVM.Def
+collectStringsIndex :: Jlt.Index -> [String]
+collectStringsIndex (Jlt.Indx e) = collectStringsExpr e
+
+trTopDef
+  :: MonadError CompilerErr m
+  => ReadEnv -> Jlt.TopDef -> m LLVM.Def
 trTopDef re (Jlt.FnDef t i args blk) = do
-  bss <- runCompiler re $ do
+  bss <- run $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
@@ -185,6 +210,8 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     , LLVM.defArgs = map trArg args
     , LLVM.defBlks = almostToBlks bss
     }
+  where
+    run = (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` re)
 
 trArg :: Jlt.Arg -> LLVM.Arg
 trArg (Jlt.Argument t i) = LLVM.Arg (trType t) (trNameToRegArg i)
@@ -250,10 +277,6 @@ sepBy p d = synth . foldl go ((d, []), [])
       else ((a, as ++ [x]), acc)
     synth (prev, acc) = acc ++ [prev]
 
--- "Type synonyms cannot be partially-applied"
--- From: http://stackoverflow.com/a/9289928/1021134
--- But this is also the type:
---     Jlt.Stmt -> WriterT AlmostInstruction Compiler ()
 trStmt
   :: MonadCompile m
   => LLVM.Label -> Jlt.Stmt -> m ()
@@ -296,6 +319,7 @@ trStmt fallThrough s = case s of
     jumpTo lblCond
     emitLabel lblAfterAWhile
   Jlt.SExp e -> void $ resultOfExpression e
+  Jlt.For{} -> impossibleRemoved
   where
     cont = trStmt fallThrough
 
@@ -317,12 +341,48 @@ emitTerminator :: MonadWriter [AlmostInstruction] m => LLVM.TermInstr -> m ()
 emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
-  => Jlt.Ident -> Jlt.Expr -> m ()
-assign i e = do
-  op <- resultOfExpression e
-  let tp = trType (typeof e)
-      reg = trNameToReg i
-  emitInstructions [LLVM.Store tp op (LLVM.Pointer tp) reg]
+  => Jlt.LValue -> Jlt.Expr -> m ()
+assign lv e = emitComment "assign" >> case lv of
+  Jlt.LIdent i -> do
+    op <- resultOfExpression e
+    let reg = trNameToReg i
+    emitInstructions [LLVM.Store tpLLVM op (LLVM.Pointer tpLLVM) reg]
+  Jlt.LIndexed i idx -> do
+    op <- resultOfExpression e
+    let reg = trNameToReg i
+    idxLLVM <- typeValueOfIndex idx
+    r0 <- newReg
+    r1 <- newReg
+    r2 <- newReg
+    tpStructLLVM <- return
+      . trType
+      . Jlt.Array
+      . typeof
+      $ e
+    let tpElems@(LLVM.Pointer tpElems') = elemTpLLVM tpStructLLVM
+    emitInstructions
+      [ LLVM.GetElementPtr tpStructLLVM (LLVM.Pointer tpStructLLVM) reg
+        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
+      , LLVM.Load tpElems (LLVM.Pointer tpElems) r0 r1
+      , LLVM.GetElementPtr tpElems' (LLVM.Pointer tpElems') r1 [idxLLVM] r2
+--      , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
+--        [(LLVM.I 32, intOp 0), idxLLVM] r1
+      , LLVM.Store tpElems' op (LLVM.Pointer tpElems') r2
+      ]
+  where
+    tpJlt = typeof e
+    tpLLVM = trType tpJlt
+
+intOp :: Int -> LLVM.Operand
+intOp = Right . LLVM.ValInt
+
+emitComment :: MonadWriter [AlmostInstruction] m => String -> m ()
+emitComment s = emitInstructions [LLVM.Comment s]
+
+typeValueOfIndex :: MonadCompile m => Jlt.Index -> m (LLVM.Type, LLVM.Operand)
+typeValueOfIndex (Jlt.Indx e) = do
+  r <- resultOfExpression e
+  return (trType $ typeof e, r)
 
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
@@ -349,11 +409,11 @@ cond e t f = do
 itemInit
   :: MonadCompile m
   => Jlt.Type -> Jlt.Item -> m ()
-itemInit jltType itm = do
+itemInit jltType itm = emitComment "init" >> do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
       tp = trType jltType
-      reg :: LLVM.Reg
+      reg :: LLVM.Name
       reg = trIdent . itemName $ itm
   case itm of
     Jlt.NoInit{} -> varInit tp reg (defaultValue jltType)
@@ -362,24 +422,71 @@ itemInit jltType itm = do
     Jlt.Init _ e -> do
       reg0 <- resultOfExpression e
       varInit tp reg reg0
+    Jlt.InitObj _ (Jlt.ArrayCon _ e) -> do
+      len <- resultOfExpression e
+      arrayInit tp (typeOfElements jltType) reg len
 
+typeOfElements :: Jlt.Type -> LLVM.Type
+typeOfElements t = case t of
+  Jlt.Array t' -> trType t'
+  _ -> typeerror "Expected array"
+
+-- We could generalize this to general structs and just say that the *type*:
+--
+--     t[n]
+--
+-- is equivalent to the c type:
+--
+--     struct { const int length ; t value[n] ; }
+--
+-- Where `t` is the type of the array and `n` is the length.
+arrayInit :: MonadCompile m => LLVM.Type -> LLVM.Type -> LLVM.Name -> LLVM.Operand -> m ()
+arrayInit structTp arrayElemTp array len = do
+  r0 <- newReg
+  r1 <- newReg
+  r2 <- newReg
+  r3 <- newReg
+  emitInstructions [ LLVM.Alloca structTp array ]
+  lengthOfArrayLLVM structTp array r0
+  let artp = sndStructLLVM structTp
+      i8   = LLVM.I 8
+      i8p  = LLVM.Pointer i8
+  emitInstructions
+    [ LLVM.Store (LLVM.I 32) len (LLVM.Pointer (LLVM.I 32)) r0
+    , LLVM.GetElementPtr structTp (LLVM.Pointer structTp) array [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r1
+    , LLVM.Call i8p (LLVM.Global "calloc")
+      [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r2
+    , LLVM.BitCast i8p r2 artp r3
+    , LLVM.Store artp (Left r3) (LLVM.Pointer artp) r1
+    ]
+  where
+    sizeOf t = Right $ LLVM.ValInt $ case t of
+      LLVM.I n -> n `div` 8
+      LLVM.Double -> 8
+    sndStructLLVM (LLVM.Struct (_:x:_)) = x
+
+lengthOfArrayLLVM :: MonadCompile m
+  => LLVM.Type -> LLVM.Name -> LLVM.Name -> m ()
+lengthOfArrayLLVM t n0 n1 = do
+  n <- return t -- LLVM.TypeAlias <$> lookupNameOfTypeErr undefined t
+  emitInstructions [ LLVM.GetElementPtr n (LLVM.Pointer n) n0 [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] n1 ]
 
 varInit
   :: MonadCompile m
-  => LLVM.Type -> LLVM.Reg -> LLVM.Operand -> m ()
+  => LLVM.Type -> LLVM.Name -> LLVM.Operand -> m ()
 varInit tp reg op = emitInstructions
   [ LLVM.Alloca tp reg
   , LLVM.Store tp op (LLVM.Pointer tp) reg
   ]
 
-allocNew :: MonadCompile m => LLVM.Type -> m LLVM.Reg
+allocNew :: MonadCompile m => LLVM.Type -> m LLVM.Name
 allocNew tp = do
   r <- newReg
   emitInstructions [LLVM.Alloca tp r]
   return r
 
-trIdent :: Jlt.Ident -> LLVM.Reg
-trIdent (Jlt.Ident s) = LLVM.Reg s
+trIdent :: Jlt.Ident -> LLVM.Name
+trIdent (Jlt.Ident s) = LLVM.Local s
 
 defaultValue :: Jlt.Type -> LLVM.Operand
 defaultValue t = case t of
@@ -391,15 +498,16 @@ itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
   Jlt.NoInit i -> i
   Jlt.Init i _  -> i
+  Jlt.InitObj i _ -> i
 
 trName :: Jlt.Ident -> LLVM.Name
-trName (Jlt.Ident s) = LLVM.Name s
+trName (Jlt.Ident s) = LLVM.Global s
 
-trNameToReg :: Jlt.Ident -> LLVM.Reg
-trNameToReg (Jlt.Ident s) = LLVM.Reg s
+trNameToReg :: Jlt.Ident -> LLVM.Name
+trNameToReg (Jlt.Ident s) = LLVM.Local s
 
-trNameToRegArg :: Jlt.Ident -> LLVM.Reg
-trNameToRegArg (Jlt.Ident s) = LLVM.Reg (s ++ ".val")
+trNameToRegArg :: Jlt.Ident -> LLVM.Name
+trNameToRegArg (Jlt.Ident s) = LLVM.Local (s ++ ".val")
 
 argType :: Jlt.Arg -> LLVM.Type
 argType (Jlt.Argument t _) = trType t
@@ -414,35 +522,51 @@ trType t = case t of
     $  "The string type cannot be translated directly. "
     ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
+  Jlt.Array t0 -> arrayLLVM (trType t0) 
 
 builtinDecls :: [LLVM.Decl]
 builtinDecls =
   [ LLVM.Decl
     { LLVM.declType = LLVM.Void
-    , LLVM.declName = LLVM.Name "printInt"
+    , LLVM.declName = LLVM.Global "printInt"
     , LLVM.declArgs = [LLVM.I 32]
     }
   , LLVM.Decl
     { LLVM.declType = LLVM.I 32
-    , LLVM.declName = LLVM.Name "readInt"
+    , LLVM.declName = LLVM.Global "readInt"
     , LLVM.declArgs = []
     }
   , LLVM.Decl
     { LLVM.declType = LLVM.Void
-    , LLVM.declName = LLVM.Name "printDouble"
+    , LLVM.declName = LLVM.Global "printDouble"
     , LLVM.declArgs = [LLVM.Double]
     }
   , LLVM.Decl
     { LLVM.declType = LLVM.Double
-    , LLVM.declName = LLVM.Name "readDouble"
+    , LLVM.declName = LLVM.Global "readDouble"
     , LLVM.declArgs = []
     }
   , LLVM.Decl
     { LLVM.declType = LLVM.Void
-    , LLVM.declName = LLVM.Name "printString"
+    , LLVM.declName = LLVM.Global "printString"
     , LLVM.declArgs = [LLVM.Pointer (LLVM.I 8)]
     }
+  , LLVM.Decl
+    { LLVM.declType = LLVM.Pointer (LLVM.I 8)
+    , LLVM.declName = LLVM.Global "calloc"
+    , LLVM.declArgs = [LLVM.I 32, LLVM.I 32]
+    }
   ]
+
+-- | The type used to represent (dynamic) arrays in llvm.
+arrayLLVM :: LLVM.Type -> LLVM.Type
+arrayLLVM t = LLVM.Struct [LLVM.I 32, LLVM.Pointer t]
+
+-- | Grabs the llvm-type from the llvm-representation of an array.
+-- The inverse of `arrayLLVM`.
+elemTpLLVM :: LLVM.Type -> LLVM.Type
+elemTpLLVM (LLVM.Struct [_, t]) = t
+elemTpLLVM _ = undefined
 
 resultOfExpressionTp
   :: MonadCompile m
@@ -481,14 +605,15 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
-    emitInstructions [mulOp op (trType tp) r0 r1 r]
+    let tp' = trType tp
+    emitInstructions [LLVM.BinOp (mulOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EAdd e0 op e1 -> do
     r0 <- resultOfExpression e0
     r1 <- resultOfExpression e1
     r <- newReg
     let tp' = trType tp
-    emitInstructions [addOp op tp' r0 r1 r]
+    emitInstructions [LLVM.BinOp (addOp op tp') tp' r0 r1 r]
     return (Left r)
   Jlt.EAnd e0 e1 -> do
     t <- newLabel
@@ -538,22 +663,80 @@ resultOfExpressionTp tp e = case e of
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
-    emitInstructions [addOp Jlt.Minus tp' (zero tp') r0 r]
+    emitInstructions [LLVM.BinOp (addOp Jlt.Minus tp') tp' (zero tp') r0 r]
     return (Left r)
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
     r <- newReg
     let tp' = trType tp
         llvmTrue = LLVM.ValInt 1
-    emitInstructions [LLVM.Xor tp' r0 (Right llvmTrue) r]
+    emitInstructions [LLVM.BinOp LLVM.Xor tp' r0 (Right llvmTrue) r]
     return (Left r)
   Jlt.EString s -> do
     sReg <- lookupString s
     r <- newReg
     let tp' = stringType s
-        path = [(LLVM.I 32, 0), (LLVM.I 32, 0)]
+        path = [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)]
     emitInstructions [LLVM.GetElementPtr tp' (LLVM.Pointer tp') sReg path r]
     return (Left r)
+  Jlt.Dot e0 (Jlt.Ident i) -> do
+    -- `r` is a pointer to an array.
+    is <- execWriterT $ resultOfExpression e0
+    --r <- resultOfExpression e0
+    unless (i == "length") (throwError (Generic $ "IMPOSSIBLE: " ++ i))
+    -- let tpArrayLLVM = trType $ typeof e0
+    (_, n) <- lastLoadToGep (const (LLVM.I 32)) [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] is
+    return (Left n)
+    --r0 <- newReg
+    -- emitInstructions [LLVM.Load (LLVM.I 32) (LLVM.Pointer (LLVM.I 32)) r r0]
+    --emitComment "lastLoadToGep"
+    --return (Left r)
+    --   [ LLVM.ExtractValue tpArrayLLVM r
+    --     [intOp 0] r0
+    --   ]
+  Jlt.EIndex e0 idx -> do
+    is <- execWriterT $ resultOfExpression e0
+    --r <- resultOfExpression e0
+    -- r0 <- newReg
+    -- let tpArrayLLVM = trType $ typeof e0
+    (LLVM.Pointer tp', r) <- lastLoadToGep elemTpLLVM [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1){-, (LLVM.I 32, v)-}] is
+    idx <- typeValueOfIndex idx
+    r0 <- newReg
+    r1 <- newReg
+    let dummy = LLVM.Double
+    emitInstructions
+      [ LLVM.GetElementPtr tp' (LLVM.Pointer tp') r [idx] r0
+      , LLVM.Load tp' (LLVM.Pointer tp') r0 r1
+      ]
+    return (Left r1)
+    --emitComment "lastLoadToGep"
+    --return r
+      -- [ LLVM.ExtractValue tpArrayLLVM r
+      --   [intOp 1, v] r0
+      -- ]
+
+splitLast :: [t] -> Maybe ([t], t)
+splitLast [] = Nothing
+splitLast [x] = Just ([], x)
+splitLast (x:xs) = do
+  (xs', l) <- splitLast xs
+  return (x:xs', l)
+
+-- | This is sort of a hack.
+lastLoadToGep :: MonadCompile m
+  => (LLVM.Type -> LLVM.Type)
+  -> [(LLVM.Type, LLVM.Operand)] -> [AlmostInstruction] -> m (LLVM.Type, LLVM.Name)
+lastLoadToGep f ops is = do
+  r <- newReg
+  case splitLast is of
+    Just (xs, Instr (LLVM.Load t0 t1 n0 n1)) -> do
+      let tp = f t0
+      tell $ xs ++ map Instr
+        [ LLVM.GetElementPtr t0 t1 n0 ops n1
+        , LLVM.Load tp (LLVM.Pointer tp) n1 r
+        ]
+      return (tp, r)
+    _ -> error "Last instruction was not load :("
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
@@ -569,18 +752,15 @@ stringType s = LLVM.Array (length s + 1) (LLVM.I 8)
 mulOp
   :: Jlt.MulOp
      -> LLVM.Type
-     -> LLVM.Operand
-     -> LLVM.Operand
-     -> LLVM.Reg
-     -> LLVM.Instruction
+     -> LLVM.Op
 mulOp op tp = case tp of
   LLVM.I{} -> case op of
-    Jlt.Times -> LLVM.Mul tp
-    Jlt.Div   -> LLVM.SDiv tp
-    Jlt.Mod   -> LLVM.SRem tp
+    Jlt.Times -> LLVM.Mul
+    Jlt.Div   -> LLVM.SDiv
+    Jlt.Mod   -> LLVM.SRem
   LLVM.Double -> case op of
-    Jlt.Times -> LLVM.FMul tp
-    Jlt.Div   -> LLVM.FDiv tp
+    Jlt.Times -> LLVM.FMul
+    Jlt.Div   -> LLVM.FDiv
     Jlt.Mod   -> typeerror "Can't take modulo of double values"
   _ -> typeerror "No mul-op for this type"
 
@@ -608,17 +788,14 @@ relOp op tp = case tp of
 addOp
   :: Jlt.AddOp
      -> LLVM.Type
-     -> LLVM.Operand
-     -> LLVM.Operand
-     -> LLVM.Reg
-     -> LLVM.Instruction
+     -> LLVM.Op
 addOp op tp = case tp of
   LLVM.I{} -> case op of
-    Jlt.Plus  -> LLVM.Add tp
-    Jlt.Minus -> LLVM.Sub tp
+    Jlt.Plus  -> LLVM.Add
+    Jlt.Minus -> LLVM.Sub
   LLVM.Double -> case op of
-    Jlt.Plus  -> LLVM.FAdd tp
-    Jlt.Minus -> LLVM.FSub tp
+    Jlt.Plus  -> LLVM.FAdd
+    Jlt.Minus -> LLVM.FSub
   _ -> typeerror "No add-op for this type"
 
 resultOfExpression :: MonadCompile m
@@ -629,7 +806,7 @@ resultOfExpression e = case e of
 
 -- NOTE `r` is only maybe used.
 -- Call Type Name [(Type, Operand)] Reg
-call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> LLVM.Reg -> m ()
+call :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> LLVM.Name -> m ()
 call t n ops r = do
   opTypes <- getArgTypes n
   let tps = zip opTypes ops
@@ -639,11 +816,14 @@ call t n ops r = do
 
 -- Various runtime errors
 
+{-# INLINE impossible #-}
 impossible :: String -> a
-impossible = error . ("THE IMPOSSIBLE HAPPENED\n" ++)
+impossible = E.throw . Impossible
 
+{-# INLINE typeerror #-}
 typeerror :: String -> a
-typeerror = impossible . ("TYPEERROR " ++)
+typeerror = E.throw . TypeError
 
+{-# INLINE impossibleRemoved #-}
 impossibleRemoved :: a
 impossibleRemoved = typeerror "removed by typechecker"

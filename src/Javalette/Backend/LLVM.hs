@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ViewPatterns #-}
 module Javalette.Backend.LLVM
   ( backend
   ) where
@@ -8,24 +7,57 @@ module Javalette.Backend.LLVM
 import System.IO
 import System.FilePath
 import System.Process
+import Options.Applicative
+import Data.Semigroup
 import Control.Monad
 
 import Javalette.Backend.Internals
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
-import Javalette.PrettyPrint
+import Javalette.PrettyPrint hiding ((<>))
 import Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
   )
 
 backend :: Backend
-backend = Backend
-  { compiler = compile
+backend = Backend Backend'
+  { runBackend = compile
+  , backendOptions = optParser
   }
 
-compile :: FilePath -> Jlt.Prog -> IO ()
-compile fp = ioStuff . compileProg
+data LLVMOpts = LLVMOpts
+  { runtime :: FilePath
+  , optCompile :: Bool
+  }
+
+optParser :: Parser LLVMOpts
+optParser = LLVMOpts
+  <$> strOption
+    (  long "runtime"
+    <> short 'r'
+    <> metavar "RUNTIME"
+    <> help "Path to files to link against"
+    <> value "lib/runtime.bc"
+    )
+  <*> switch
+    (  long "compile"
+    <> short 'c'
+    <> help "Also invoke the compiler"
+    )
+
+-- I don't know how combine the parser defined by a backend with the main
+-- parser. See [Agda.Compiler.Backend.parseBackendOptions] for inspiration.
+--
+-- [Agda.Compiler.Backend.parseBackendOptions]:
+--   https://github.com/agda/agda/blob/master/src/full/Agda/Compiler/Backend.hs#L119
+compile :: LLVMOpts -> FilePath -> Jlt.Prog -> IO ()
+compile _ = compile' cheat
+  where
+    cheat = LLVMOpts "lib/runtime.bc" True
+
+compile' :: LLVMOpts -> FilePath -> Jlt.Prog -> IO ()
+compile' opts fp = ioStuff . compileProg
   where
     ioStuff :: Either CompilerErr LLVM.Prog -> IO ()
     ioStuff (Left e)  = putStrLnStdErr . prettyShow $ e
@@ -34,13 +66,13 @@ compile fp = ioStuff . compileProg
       putStrLn assembly
       writeFile  (fp <.> "ll") assembly
       doAssemble (fp <.> "ll")
-      -- let linked = fp ++ "-linked" <.> "bc"
-      -- doLink     [fp <.> "bc", runtime] (linked <.> "bc")
-      -- doLlc (linked <.> "bc")
-      -- doCompile (linked <.> "o")
-
-runtime :: FilePath
-runtime = "lib/runtime.bc"
+      when (optCompile opts) cmpl
+    cmpl = do
+      let linked = fp ++ "-linked"
+          rt     = runtime opts
+      doLink     [fp <.> "bc", rt] (linked <.> "bc")
+      doLlc (linked <.> "bc")
+      doCompile (linked <.> "o")
 
 putStrLnStdErr :: String -> IO ()
 putStrLnStdErr = hPutStrLn stderr

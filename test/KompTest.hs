@@ -205,7 +205,7 @@ testCompilation c good fs =
 testCompilationProg :: FilePath -> Bool -> FilePath -> IO ErrorReport
 testCompilationProg path good f = do
   let c = path ++ " " ++ f
---  putStrLn $ takeFileName path ++ " " ++ takeFileName f ++ "..."
+  putStrLn $ takeFileName path ++ " " ++ takeFileName f ++ "..."
   (out,err,_) <- runCommandStrWait c ""
   let rep = defRep {repCmd = f, repStdOut = out, repStdErr = err}
   lns <- return $ lines err
@@ -231,8 +231,12 @@ testCompilationProg path good f = do
 objFileLLVM :: FilePath -> FilePath
 objFileLLVM f = dropExtension f <.> "bc"
 
-linkLLVM :: String -> FilePath -> FilePath -> IO ()
-linkLLVM ver libPath bcFile = do
+linkLLVM :: [String] -- ^ Flags to pass to GCC
+         -> String   -- ^ LLVM version
+         -> FilePath -- ^ Library path (i.e. dir with runtime.bc)
+         -> FilePath -- ^ .bc file to compile
+         -> IO ()
+linkLLVM gccflags ver libPath bcFile = do
   ec <- system "which llvm-ld"
   case ec of
     ExitSuccess -> linkLegacyLLVM
@@ -254,26 +258,27 @@ linkLLVM ver libPath bcFile = do
         , "opt" ++ ver
         , "llc" ++ ver ++ " > " ++ file
         ]
-      system ("clang -oa.out " ++ file)
+      system ("gcc -oa.out " ++ intercalate " " gccflags ++ " " ++ file)
 
     -- bitcode file containing the runtime
     runtimeBitcode = "runtime.bc"
 
 
-runLLVM ::  String -- ^ LLVM version suffix
-         -> String -- ^ libpath
-         -> String -- ^ LLVM bitcode file
-         -> FilePath -- ^ source file (for error reporting)
-         -> FilePath -- ^ known input file
-         -> FilePath -- ^ known output file
-         -> IO Bool
-runLLVM ver libPath bcFile src inp outp = do
+runLLVM :: [String] -- ^ Flags for GCC.
+        -> String -- ^ LLVM version suffix
+        -> String -- ^ libpath
+        -> String -- ^ LLVM bitcode file
+        -> FilePath -- ^ source file (for error reporting)
+        -> FilePath -- ^ known input file
+        -> FilePath -- ^ known output file
+        -> IO Bool
+runLLVM gccflags ver libPath bcFile src inp outp = do
   let dir = takeDirectory bcFile
   d0  <- System.Directory.getCurrentDirectory
   setCurrentDirectory dir
   withIntermediateFile bcFile src $ do
     killFile ("a.out")
-    linkLLVM ver libPath bcFile
+    linkLLVM gccflags ver libPath bcFile
     result <- runProg "./a.out" src inp outp
     setCurrentDirectory d0
     return result
@@ -302,11 +307,11 @@ killFile f = do
   b <- doesFileExist f
   when b $ removeFile f
 
-llvmBackend :: String -> FilePath -> Backend
-llvmBackend ver libpath = Backend
+llvmBackend :: [String] -> String -> FilePath -> Backend
+llvmBackend gccflags ver libpath = Backend
   { name = "LLVM"
   , objFile = objFileLLVM
-  , run = runLLVM ver libpath
+  , run = runLLVM gccflags ver libpath
   }
 
 --
@@ -320,33 +325,40 @@ data X86ABI = X86 | X86_64
 objFilex86 :: FilePath -> FilePath
 objFilex86 f = dropExtension f <.> "o"
 
-runx86 :: X86ABI   -- ^ 32 or 64 bit program?
+runx86 :: [String] -- ^ Flags for GCC
+       -> X86ABI   -- ^ 32 or 64 bit program?
        -> FilePath -- ^ Library path
        -> FilePath -- ^ Object file
        -> FilePath -- ^ Source file
        -> FilePath -- ^ stdin
        -> FilePath -- ^ stdout
        -> IO Bool
-runx86 abi libPath oFile src inp outp = do
+runx86 gccflags abi libPath oFile src inp outp = do
   let dir  = takeDirectory oFile
   d0  <- System.Directory.getCurrentDirectory
   setCurrentDirectory dir
   withIntermediateFile oFile src $ do
     killFile "a.out"
-    system $ unwords ["clang", unwords gccopts, oFile, libPath ++"/runtime.o"]
+    system $ unwords
+      [ "gcc"
+      , unwords gccflags
+      , unwords gccabi
+      , oFile
+      , libPath ++"/runtime.o"
+      ]
     result <- runProg "./a.out" src inp outp
     setCurrentDirectory d0
     return result
   where
-    gccopts
+    gccabi
       | abi == X86 = ["-m32"]
       | otherwise  = ["-m64"]
 
-x86Backend :: X86ABI -> String -> Backend
-x86Backend abi libpath = Backend
+x86Backend :: [String] -> X86ABI -> String -> Backend
+x86Backend gccflags abi libpath = Backend
   { name = "x86"
   , objFile = objFilex86
-  , run = runx86 abi libpath
+  , run = runx86 gccflags abi libpath
   }
 
 getTestFilesForPath :: String -> IO [String]

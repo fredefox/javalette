@@ -77,6 +77,11 @@ lookupIdentErr i
   = fromMaybe (error "Var not found - typechecker broken")
   <$> lookupIdent i
 
+lookupLValErr :: LValue -> R LValue
+lookupLValErr lv = case lv of
+  LIdent i -> LIdent <$> lookupIdentErr i
+  LIndexed i idx -> LIndexed <$> lookupIdentErr i <*> rIndexM idx
+
 pushScope :: R ()
 pushScope = modifyVars push
   where
@@ -114,7 +119,7 @@ rStmtM s = case s of
   Empty -> return Empty
   BStmt blk -> BStmt <$> rBlkM blk
   Decl t is -> Decl t <$> mapM rItemM is
-  Ass i e -> Ass <$> lookupIdentErr i <*> rExprM e
+  Ass i e -> Ass <$> lookupLValErr i <*> rExprM e
   Incr i -> Incr <$> lookupIdentErr i
   Decr i -> Incr <$> lookupIdentErr i
   Ret e -> Ret <$> rExprM e
@@ -123,6 +128,17 @@ rStmtM s = case s of
   CondElse e s0 s1 -> CondElse <$> rExprM e <*> rStmtM s0 <*> rStmtM s1
   While e s0 -> While <$> rExprM e <*> rStmtM s0
   SExp e -> SExp <$> rExprM e
+  For t i e s0 -> For t <$> renameIdent i <*> rExprM e <*> rStmtM s0
+  -- For t i e s0 -> do
+  --   i' <- renameIdent i
+  --   e' <- rExprM e
+  --   s0' <- rStmtM s0
+  --   return ( BStmt (Block
+  --     [ Decl t [Init i' (ELitInt 0)]
+  --     , While (ERel (EVar i') LTH (Dot e' (Ident "length"))) s0'
+  --     , Ass (LIdent i') (EAdd (EVar i) Plus (ELitInt 1))
+  --     ]
+  --     ))
 
 rItemM :: Item -> R Item
 rItemM itm = case itm of
@@ -131,6 +147,10 @@ rItemM itm = case itm of
     e' <- rExprM e
     i' <- renameIdent i
     return (Init i' e')
+  InitObj i c -> InitObj <$> renameIdent i <*> rConstructorM c
+
+rConstructorM :: Constructor -> R Constructor
+rConstructorM (ArrayCon t e) = ArrayCon t <$> rExprM e
 
 rExprM :: Expr -> R Expr
 rExprM e = case e of
@@ -147,5 +167,10 @@ rExprM e = case e of
   EAnd e0 e1 -> EAnd <$> rExprM e0 <*> rExprM e1
   EOr e0 e1 -> EOr <$> rExprM e0 <*> rExprM e1
   EAnn tp e0 -> EAnn tp <$> rExprM e0
+  Dot e0 i -> Dot <$> rExprM e0 <*> pure i
+  EIndex e0 i -> EIndex <$> rExprM e0 <*> rIndexM i
   where
     ret = return e
+
+rIndexM :: Index -> R Index
+rIndexM (Indx e) = Indx <$> rExprM e

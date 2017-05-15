@@ -70,7 +70,7 @@ wiredInDefs = M.fromList
     i |-> def = (AST.Ident i, DefWiredin def)
 
 
-data InterpreterError
+newtype InterpreterError
   = Generic String
 
 instance Pretty InterpreterError where
@@ -217,10 +217,12 @@ defaultValue t = case t of
   AST.String -> ValString ""
   AST.Fun{} -> error "Cannot assign functions to variables"
 
-assign :: AST.Ident -> AST.Expr -> Interpreter ()
-assign i e = do
-  v <- valueOf e
-  setVariable i v
+assign :: AST.LValue -> AST.Expr -> Interpreter ()
+assign lv e = case lv of
+  AST.LIdent i -> do
+    v <- valueOf e
+    setVariable i v
+  AST.LIndexed _i _idx -> error "Not implemented"
 
 incr, decr :: AST.Ident -> Interpreter ()
 incr = (`modifyVariable` incrVal)

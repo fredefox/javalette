@@ -5,14 +5,16 @@ import System.IO
 import System.Environment
 import System.Exit
 import System.FilePath
+import Options.Applicative
+import Data.Semigroup ((<>))
 
 import Javalette.Syntax
 import qualified Javalette.Parser as Parser
 import qualified Javalette.TypeChecking as TypeChecking
 import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
-import Javalette.PrettyPrint
-import qualified Javalette.Compiler as Compiler (compile)
+import Javalette.PrettyPrint hiding ((<>))
+import qualified Javalette.Compiler as Compiler (execAllBackends)
 
 -- | Runs the compiler on all files given as arguments.
 main :: IO ()
@@ -35,11 +37,33 @@ handleErrors errOrT = case errOrT of
 -- | Assumes that all argumens are paths to files. Reads the contents of these
 -- files.
 parseInput :: IO Args
-parseInput = Args <$> getArgs
+parseInput = execParser opts
+  where
+    opts = info (argsParser <**> helper)
+      ( fullDesc
+      <> progDesc "Compile javalette programs"
+      <> header "jlc"
+      )
 
 data Args = Args
   { argsFilePaths :: [FilePath]
+  , argsBackend   :: [String]
   }
+
+argsParser :: Parser Args
+argsParser = Args
+  <$> many (argument str (metavar "FILE"))
+  <*> many (strOption
+    ( long "backend"
+    <> short 'b'
+    <> metavar "BACKEND"
+    <> help
+      ( unlines
+        [ "Only invoke BACKEND "
+        , "(all backends are invoked per default for compatibility reasons)"
+        ]
+      )
+    ))
 
 -- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
@@ -54,7 +78,7 @@ compile :: FilePath -> IO ()
 compile fp = do
   s <- readFile fp
   pAnnt <- handleErrors $ parseProgram s >>= typecheck
-  Compiler.compile (dropExtension fp) pAnnt
+  Compiler.execAllBackends (dropExtension fp) pAnnt
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> Either CompilerErr Prog

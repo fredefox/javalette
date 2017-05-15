@@ -94,7 +94,7 @@ All other symbols are terminals.
   | //Constructor// | -> | //Type// ``[`` //Expr// ``]`` 
   | //LValue// | -> | //Ident// 
   |  |  **|**  | //Ident// //Index// 
-  | //Index// | -> | ``[`` //Expr// ``]`` 
+  | //Index// | -> | ``[`` //Ident// ``]`` 
   | //Type// | -> | ``int`` 
   |  |  **|**  | ``double`` 
   |  |  **|**  | ``boolean`` 

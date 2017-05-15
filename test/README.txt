@@ -30,6 +30,9 @@ command line arguments. The possible options are:
 -b x86             Target files are 32-bit x86 .o files
 -b x86_64          Target files are 64-bit x86_64 .o files
 -b custom          Target file is an executable `a.out'
+-g <flag>          Pass <flag> as an option to GCC when linking.
+                   Using `-g-no-pie` may be necessary on certain
+                   Linux distributions.
 -l <ver>           Use LLVM version <ver> (only useful with `-b LLVM')
 -t <dir>           Look for the test suite in directory <dir>.
 -k                 Keep around any temporary directories. Only relevant when

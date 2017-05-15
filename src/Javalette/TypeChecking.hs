@@ -79,13 +79,14 @@ class TypeCheck a => Infer a where
 data Env = Env
   { envVars :: [Map Ident Type]
   , envDefs :: Definitions
-  }
+  , countIterators :: Int
+  } deriving (Show)
 
 type Definitions = Map Ident Definition
 
 -- | A definition is either part of the built-in methods or it is
 -- part of the AST.
-data Definition = DefWiredIn WiredIn | Def TopDef
+data Definition = DefWiredIn WiredIn | Def TopDef deriving (Show)
 
 -- | Modifies the variables - used during assignment.
 modifyVars :: ([Map Ident Type] -> [Map Ident Type]) -> Env -> Env
@@ -95,6 +96,15 @@ modifyVars f e = e { envVars = f (envVars e) }
 -- definitions.
 modifyDefs :: (Definitions -> Definitions) -> Env -> Env
 modifyDefs f e = e { envDefs = f (envDefs e) }
+
+incrCountIterators :: TypeChecker Int
+incrCountIterators = do
+  i <- gets countIterators
+  modify (\s -> s { countIterators = succ i })
+  return i
+
+newCountIterator :: TypeChecker Ident
+newCountIterator = Ident . ("__iterator__" ++) . show <$> incrCountIterators
 
 -- | The control-structure used for typechecking.
 type TypeChecker a = StateT Env (Except TypeCheckingError) a
@@ -115,6 +125,7 @@ initEnv :: Env
 initEnv = Env
   { envVars = []
   , envDefs = wiredInDefs
+  , countIterators = 0
   }
 
 -- NOTE Do we wanne refer to the types defined by the AST or do we want to
@@ -125,7 +136,7 @@ data WiredIn = WiredIn
   { _wiredInType :: Type
   , _wiredInArgs :: [Arg]
   , _wiredInIdent :: Ident
-  }
+  } deriving (Show)
 
 -- | The list of wired-in definitions.
 wiredInDefs :: Definitions
@@ -142,6 +153,18 @@ wiredInDefs = M.fromList
 -- | Adds a new scope. Used when entering blocks.
 newScope :: TypeChecker ()
 newScope = modify (modifyVars $ \xs -> M.empty : xs)
+
+-- | Pops a scope from the stack.
+popScope :: TypeChecker ()
+popScope = modify (modifyVars $ \(_:xs) -> xs)
+
+-- | Executes a command in a new scope and returns the result of that action.
+withNewScope :: TypeChecker a -> TypeChecker a
+withNewScope act = do
+  newScope
+  x <- act
+  popScope
+  pure x
 
 -- | Used finding all top-level definitions.
 unionDefs :: Definitions -> TypeChecker ()
@@ -195,12 +218,12 @@ instance TypeCheck Prog where
 -- specified type. Note that this does *not* guarantee that all paths return a
 -- value of the given type. For this you need `staticControlFlowCheck`.
 instance TypeCheck TopDef where
-  typechk (FnDef t i args blk) = do
-    _ <- newScope
-    _ <- addArgs args
-    blk' <- typecheckBlk t blk
-    let blk'' = case t of Void -> implicitReturn blk' ; _ -> blk'
-    return (FnDef t i args blk'')
+  typechk (FnDef t i args blk) =
+    withNewScope $ do
+      _ <- addArgs args
+      blk' <- typecheckBlk t blk
+      let blk'' = case t of Void -> implicitReturn blk' ; _ -> blk'
+      return (FnDef t i args blk'')
 
 implicitReturn :: Blk -> Blk
 implicitReturn (Block stmts) = Block $ case safeLast stmts of
@@ -219,7 +242,7 @@ safeLast (_ : xs) = safeLast xs
 -- instance TypeCheck Blk where
 -- | Almost a `TypeCheck` instance for block-statements. See `typecheckStmts`.
 typecheckBlk :: Type -> Blk -> TypeChecker Blk
-typecheckBlk t (Block stms) = Block <$> mapM (typecheckStmt t) stms
+typecheckBlk t (Block stms) = Block <$> withNewScope (mapM (typecheckStmt t) stms)
 
 -- Almost the `TypeCheck` instance for `Stmt`. We check that *if* there is a
 -- return-statement, then the inferred type of that expression has the given
@@ -227,27 +250,28 @@ typecheckBlk t (Block stms) = Block <$> mapM (typecheckStmt t) stms
 typecheckStmt :: Type -> Stmt -> TypeChecker Stmt
 typecheckStmt t s = case s of
   Empty          -> return Empty
-  BStmt blk      -> BStmt <$> (newScope >> typecheckBlk t blk)
+  BStmt blk      -> BStmt <$> withNewScope (typecheckBlk t blk)
   Decl t0 its    -> do
     its' <- mapM (typecheckItem t0) its
     addBindings $ map (\i -> (itemIdent i, t0)) its
     return (Decl t0 its')
-  Ass i e        -> do
-    ti <- lookupTypeVar i
+  Ass lval e        -> do
+    (tLval, lval') <- lookupTypeLValue lval
     (e', te) <- infer e
-    unless (ti == te)
+    unless (tLval == te)
       $ throwError TypeMismatch
-    return (Ass i e')
+    return (Ass lval' e')
+  -- TODO We should be able to just desugar at this step.
   Incr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass i (EAdd (EVar i) Plus  (one t')))
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t')))
   Decr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass i (EAdd (EVar i) Minus (one t')))
+    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -268,12 +292,62 @@ typecheckStmt t s = case s of
     e' <- inferBoolean e
     s0' <- typecheckStmt t s0
     return (While e' s0')
-  SExp e -> SExp <$> typechk e
+  SExp e -> SExp <$> do
+    (e', t') <- infer e
+    unless (isVoid t')
+      $ throwError (GenericError "Expression statements must be void")
+    return e'
+  -- For t0 i e s0 -> withNewScope $ do
+  --   (e', t') <- infer e
+  --   addBinding i t0
+  --   unless (arrayOfType t' t0)
+  --     $ throwError (GenericError "Iterator/iteratee type mismatch")
+  --   s0' <- typecheckStmt t s0
+  --   return (For t0 i e' s0')
+  For t0 i e s0 -> do
+    noSugar <- desugarFor t0 i e s0
+    typecheckStmt t noSugar
+
+-- | Desugars a for-loop.
+desugarFor :: Type
+     -> Ident
+     -> Expr
+     -> Stmt
+     -> StateT Env (Except TypeCheckingError) Stmt
+desugarFor t0 i e s0 = do
+    iterator <- newCountIterator
+    let whlbd = [Decl t0 [Init i (EIndex e (Indx (EVar iterator)))], Incr iterator , s0]
+    return ( BStmt (Block
+        [ Decl Int [Init iterator (ELitInt 0)]
+        , While (ERel (EVar iterator) LTH (Dot e (Ident "length"))) (BStmt (Block whlbd))
+        ]
+        ))
+
+
+lookupTypeLValue :: LValue -> TypeChecker (Type, LValue)
+lookupTypeLValue lv = case lv of
+  LIdent i -> do
+    t <- lookupTypeVar i
+    return (t, lv)
+  LIndexed i idx -> do
+    t <- lookupTypeVar i
+    (idx', tp) <- infer idx
+    unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
+    case t of
+      Array t' -> return (t', LIndexed i idx')
+      _     -> throwError (GenericError "Cannot index into non-array type")
+
+instance TypeCheck Index where
+instance Infer Index where
+  infer (Indx e) = do
+    (e', t) <- infer e
+    unless (t == Int) $ throwError $ GenericError "Index must be integer"
+    return (Indx e', t)
 
 one :: Type -> Expr
 one t = case t of
   Int -> ELitInt 1 ; Doub -> ELitDoub 1
-  Bool -> err ; Void -> err ; String -> err ; Fun{} -> err
+  Bool -> err ; Void -> err ; String -> err ; Fun{} -> err; Array{} -> err
   where
     err = error "non-numeric value"
 
@@ -327,13 +401,27 @@ itemIdent :: Item -> Ident
 itemIdent itm = case itm of
   NoInit i -> i
   Init i _ -> i
+  InitObj i _ -> i
 
 -- | Some types are "numerical" values.
 isNumeric :: Type -> Bool
 isNumeric t = case t of
   { Int  -> True ; Doub -> True
-  ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False
+  ; Bool -> False ; Void -> False ; Fun{} -> False; String{} -> False ; Array{} -> False
   }
+
+isVoid :: Type -> Bool
+isVoid t = case t of
+  { Void -> True
+  ; Int  -> False ; Doub -> False ; Bool -> False ; Fun{} -> False
+  ; String{} -> False ; Array{} -> False
+  }
+
+-- | Checks that the first argument is an array of the latter type.
+arrayOfType :: Type -> Type -> Bool
+arrayOfType t u = case t of
+  Array t' -> t' == u
+  _ -> False
 
 -- | Checks that it is the single integer type.
 isInteger :: Type -> Bool
@@ -349,6 +437,15 @@ typecheckItem t i = case i of
     unless (t == t')
       $ throwError TypeMismatch
     return (Init idnt e')
+  InitObj i0 c -> InitObj i0 <$> typecheckConstructor c
+
+typecheckConstructor :: Constructor -> TypeChecker Constructor
+typecheckConstructor c = case c of
+  ArrayCon tp e -> do
+    (e', t') <- infer e
+    unless (t' == Int)
+      $ throwError (GenericError "Length of array must be an integer")
+    return (ArrayCon tp e')
 
 instance TypeCheck Expr where
 instance Infer Expr where
@@ -392,6 +489,28 @@ instance Infer Expr where
       (e0', e1', t) <- checkBinOp (== AST.Bool) e0 e1
       return (EOr e0' e1', t)
     EAnn tp _ -> return (e, tp)
+    Dot e0 i -> typeOfDot e0 i
+    EIndex e0 idx -> do
+      (e', t) <- infer e0
+      idx' <- typechk idx
+      case t of
+        Array tElem -> return (EIndex e' idx', tElem)
+        _ -> throwError (GenericError "Can only index arrays")
+
+-- `typeOfDot` assumes that the only thing you can dot is the length of a list.
+-- This must be changed if support for objects is needed.
+typeOfDot :: Expr -> Ident -> TypeChecker (Expr, Type)
+typeOfDot e i@(Ident s) = do
+  (e', t) <- infer e
+  unless (isArrayType t)
+    $ throwError (GenericError "Can only dot arrays")
+  unless (s == "length")
+    $ throwError (GenericError "Can only dot da length")
+  return (Dot e' i, Int)
+
+isArrayType :: Type -> Bool
+isArrayType t = case t of
+  Array{} -> True ; _ -> False
 
 annotate :: Expr -> Type -> (Expr, Type)
 annotate e t = (EAnn t e, t)
@@ -475,13 +594,14 @@ staticControlFlowCheck (Program defs) = do
 
 staticControlFlowCheckDef
   :: TopDef -> TypeChecker ()
-staticControlFlowCheckDef (FnDef t _ args blk) = do
-  _ <- newScope
+staticControlFlowCheckDef (FnDef t _ args blk) = withNewScope $ do
   _ <- addArgs args
   ft <- inferBlk blk
   case ft of
-    Always t' -> when (t /= t')       (throwError (GenericError "Inferred type doesn't match expected type"))
-    _         -> when (t /= AST.Void) (throwError (GenericError "Control-flow is out of whack you!"))
+    Always t' -> when (t /= t')
+      $ throwError $ GenericError "Inferred type doesn't match expected type"
+    _         -> when (t /= AST.Void)
+      $ throwError $ GenericError "Control-flow is out of whack yo!"
 
 -- | Infers the return-type of a statement and return how "often" we see this
 -- type. The frequency with which we see the type can be seen as wether or not
@@ -489,7 +609,7 @@ staticControlFlowCheckDef (FnDef t _ args blk) = do
 inferStmt :: Stmt -> TypeChecker (Frequency Type)
 inferStmt s = case s of
   Empty          -> return Never
-  BStmt blk      -> newScope >> inferBlk blk
+  BStmt blk      -> withNewScope $ inferBlk blk
   Decl t0 its    -> do
     addBindings $ map (\i -> (itemIdent i, t0)) its
     return Never
@@ -526,9 +646,10 @@ inferStmt s = case s of
       (Just _)               -> throwError (GenericError "Impossible type-error")
       Nothing                -> sometimes <$> inferStmt s0
   SExp{} -> return Never
+  For{} -> return Never
 
 -- TODO Unimplemented.
-assign :: Ident -> Expr -> TypeChecker ()
+assign :: LValue -> Expr -> TypeChecker ()
 assign _ _ = return ()
 incr, decr :: Ident -> TypeChecker ()
 incr _ = return ()
@@ -610,6 +731,8 @@ staticValue e = case e of
     EOr{}  -> stub
     EApp{} -> stub
     EAnn _ e0 -> staticValue e0
+    Dot{}    -> stub
+    EIndex{} -> stub
     where
       changeVal f m = fmap f <$> m
       valNot (ValBool b) = ValBool (not b)
