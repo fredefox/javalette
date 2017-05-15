@@ -68,7 +68,7 @@ compile' opts fp = ioStuff . compileProg
       doAssemble (fp <.> "ll")
       when (optCompile opts) cmpl
     cmpl = do
-      let linked = fp ++ "-linked" <.> "bc"
+      let linked = fp ++ "-linked"
           rt     = runtime opts
       doLink     [fp <.> "bc", rt] (linked <.> "bc")
       doLlc (linked <.> "bc")

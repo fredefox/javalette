@@ -349,32 +349,22 @@ assign lv e = emitComment "assign" >> case lv of
     let reg = trNameToReg i
     idxLLVM <- typeValueOfIndex idx
     r0 <- newReg
-    r1 <- newReg
     tpStructLLVM <- return
---      <- fmap LLVM.TypeAlias
---      . lookupNameOfTypeErr undefined
       . trType
       . Jlt.Array
       . typeof
       $ e
-    let leIndex = fmap intVal idxLLVM
-        tpArrayLLVM = stub
-        tpElems = LLVM.I 32
+    let tpElems = elemTpLLVM tpStructLLVM
     emitInstructions
       [ LLVM.GetElementPtr tpStructLLVM (LLVM.Pointer tpStructLLVM) reg
-        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
-      , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
-        [(LLVM.I 32, intOp 0), idxLLVM] r1
-      , LLVM.Store tpElems op (LLVM.Pointer tpElems) r1
+        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1), idxLLVM] r0
+--      , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
+--        [(LLVM.I 32, intOp 0), idxLLVM] r1
+      , LLVM.Store tpElems op (LLVM.Pointer tpElems) r0
       ]
   where
     tpJlt = typeof e
     tpLLVM = trType tpJlt
-    -- TODO: It seems we need to let `GetElementPtr` accept "operands"
-    intVal :: LLVM.Operand -> Int
-    intVal (Right (LLVM.ValInt i)) = i
-    stub = dynIntArray
-    dynIntArray = LLVM.Array 0 (LLVM.I 32)
 
 intOp :: Int -> LLVM.Operand
 intOp = Right . LLVM.ValInt
