@@ -39,6 +39,7 @@ library
                        Javalette.Parser.Main
                        Javalette.PrettyPrint
                        Javalette.Compiler
+                       Javalette.Options
                        Javalette.Backend
                        Javalette.Backend.LLVM
                        Javalette.Backend.LLVM.CodeGenerator

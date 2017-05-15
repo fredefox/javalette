@@ -14,13 +14,18 @@ import qualified Javalette.TypeChecking as TypeChecking
 import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 import Javalette.PrettyPrint hiding ((<>))
-import qualified Javalette.Compiler as Compiler (execAllBackends)
+import qualified Javalette.Compiler as Compiler
+  ( execAllBackends
+  )
+import qualified Javalette.Options as StdOpts
+import qualified Javalette.Backend.LLVM as LLVM
 
 -- | Runs the compiler on all files given as arguments.
 main :: IO ()
 main = do
-  inp <- parseInput
-  mapM_ compile (argsFilePaths inp)
+  -- HACK
+  inp <- execParser LLVM.optParser
+  mapM_ compile (StdOpts.argsFilePaths inp)
 
 handleErrors :: Pretty err => Either err t -> IO t
 handleErrors errOrT = case errOrT of
@@ -31,41 +36,6 @@ handleErrors errOrT = case errOrT of
     Right t -> do
       putStrLnErr "OK"
       return t
-
--- TODO: We might like to do something more fancy (e.g. using
--- optparse-applicative)
--- | Assumes that all argumens are paths to files. Reads the contents of these
--- files.
-parseInput :: IO (Args ())
-parseInput = execParser opts
-  where
-    opts = info (argsParser <**> helper)
-      ( fullDesc
-      <> progDesc "Compile javalette programs"
-      <> header "jlc"
-      )
-
-data Args a = Args
-  { argsFilePaths :: [FilePath]
-  , argsBackend   :: [String]
-  , argsBackendArguments :: a
-  }
-
-argsParser :: Parser (Args ())
-argsParser = Args
-  <$> many (argument str (metavar "FILE"))
-  <*> many (strOption
-    ( long "backend"
-    <> short 'b'
-    <> metavar "BACKEND"
-    <> help
-      ( unlines
-        [ "Only invoke BACKEND "
-        , "(all backends are invoked per default for compatibility reasons)"
-        ]
-      )
-    ))
-  <*> pure ()
 
 -- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)

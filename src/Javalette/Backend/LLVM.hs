@@ -2,6 +2,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Javalette.Backend.LLVM
   ( backend
+  -- Used internally
+  , optParser
   ) where
 
 import System.IO
@@ -19,6 +21,7 @@ import Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
   )
+import qualified Javalette.Options as StdOpts
 
 backend :: Backend
 backend = Backend
@@ -31,8 +34,8 @@ data LLVMOpts = LLVMOpts
   , optCompile :: Bool
   }
 
-optParser :: Parser LLVMOpts
-optParser = LLVMOpts
+optParser :: ParserInfo (StdOpts.Args LLVMOpts)
+optParser = StdOpts.parseArgsAdditional $ LLVMOpts
   <$> strOption
     (  long "runtime"
     <> short 'r'

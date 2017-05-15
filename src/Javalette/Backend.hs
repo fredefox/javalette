@@ -4,20 +4,22 @@ module Javalette.Backend
   , runBackend
   ) where
 
+import Options.Applicative
+
 import Javalette.Syntax (Prog)
 import Javalette.Backend.Internals hiding (runBackend)
 import qualified Javalette.Backend.Internals as I (runBackend)
+import Javalette.Options as StdOpts
 
 runBackend :: Backend -> FilePath -> Prog -> IO ()
--- runBackend
---   ( Backend Backend'
---     { I.runBackend = run
---     , backendOptions = optParser
---     }
---   ) fp p = do
---     opts <- execParser (info (optParser <**> helper) mempty)
---     run opts fp p
 runBackend
   Backend
-  { I.runBackend = run
-  } = run undefined
+    { I.runBackend = run
+    , backendOptions = optParser
+    } fp p = do
+    opts <- execParser optParser
+    run (argsAdditionalArguments opts) fp p
+-- runBackend
+--   Backend
+--   { I.runBackend = run
+--   } = run undefined

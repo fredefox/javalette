@@ -2,9 +2,12 @@ module Javalette.Compiler
   ( execAllBackends
   ) where
 
+import Options.Applicative
+
 import Javalette.Syntax as AST
 import Javalette.Backend
 import qualified Javalette.Backend.LLVM as LLVM
+import qualified Javalette.Options as StdOpts
 
 execAllBackends :: FilePath -> AST.Prog -> IO ()
 execAllBackends fp p = mapM_ run backends
