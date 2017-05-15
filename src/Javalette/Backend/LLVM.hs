@@ -21,7 +21,7 @@ import Javalette.Backend.LLVM.CodeGenerator
   )
 
 backend :: Backend
-backend = Backend Backend'
+backend = Backend
   { runBackend = compile
   , backendOptions = optParser
   }

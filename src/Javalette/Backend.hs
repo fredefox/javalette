@@ -4,8 +4,6 @@ module Javalette.Backend
   , runBackend
   ) where
 
-import Options.Applicative
-
 import Javalette.Syntax (Prog)
 import Javalette.Backend.Internals hiding (runBackend)
 import qualified Javalette.Backend.Internals as I (runBackend)
@@ -20,7 +18,6 @@ runBackend :: Backend -> FilePath -> Prog -> IO ()
 --     opts <- execParser (info (optParser <**> helper) mempty)
 --     run opts fp p
 runBackend
-  ( Backend Backend'
-    { I.runBackend = run
-    }
-  ) = run undefined
+  Backend
+  { I.runBackend = run
+  } = run undefined

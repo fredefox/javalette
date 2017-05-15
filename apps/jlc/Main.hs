@@ -36,7 +36,7 @@ handleErrors errOrT = case errOrT of
 -- optparse-applicative)
 -- | Assumes that all argumens are paths to files. Reads the contents of these
 -- files.
-parseInput :: IO Args
+parseInput :: IO (Args ())
 parseInput = execParser opts
   where
     opts = info (argsParser <**> helper)
@@ -45,12 +45,13 @@ parseInput = execParser opts
       <> header "jlc"
       )
 
-data Args = Args
+data Args a = Args
   { argsFilePaths :: [FilePath]
   , argsBackend   :: [String]
+  , argsBackendArguments :: a
   }
 
-argsParser :: Parser Args
+argsParser :: Parser (Args ())
 argsParser = Args
   <$> many (argument str (metavar "FILE"))
   <*> many (strOption
@@ -64,6 +65,7 @@ argsParser = Args
         ]
       )
     ))
+  <*> pure ()
 
 -- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
