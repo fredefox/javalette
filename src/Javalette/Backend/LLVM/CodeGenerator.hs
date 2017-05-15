@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ViewPatterns #-}
 module Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
@@ -17,6 +18,8 @@ import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
+
+import Javalette.Debug
 
 data CompilerErr = Generic String | Impossible String | TypeError String
 
@@ -437,18 +440,26 @@ arrayInit :: MonadCompile m => LLVM.Type -> LLVM.Type -> LLVM.Name -> LLVM.Opera
 arrayInit structTp arrayElemTp array len = do
   r0 <- newReg
   r1 <- newReg
+  r2 <- newReg
+  r3 <- newReg
   emitInstructions [ LLVM.Alloca structTp array ]
   lengthOfArrayLLVM structTp array r0
+  let artp = sndStructLLVM structTp
+      i8   = LLVM.I 8
+      i8p  = LLVM.Pointer i8
   emitInstructions
     [ LLVM.Store (LLVM.I 32) len (LLVM.Pointer (LLVM.I 32)) r0
-    , LLVM.Call dummy (LLVM.Global "calloc")
-      [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r1
+    , LLVM.GetElementPtr structTp (LLVM.Pointer structTp) array [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r1
+    , LLVM.Call i8p (LLVM.Global "calloc")
+      [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r2
+    , LLVM.BitCast i8p r2 artp r3
+    , LLVM.Store artp (Left r3) (LLVM.Pointer artp) r1
     ]
   where
-    dummy = LLVM.Pointer (LLVM.I 8)
     sizeOf t = Right $ LLVM.ValInt $ case t of
       LLVM.I n -> n `div` 8
       LLVM.Double -> 8
+    sndStructLLVM (LLVM.Struct (_:x:_)) = x
 
 lengthOfArrayLLVM :: MonadCompile m
   => LLVM.Type -> LLVM.Name -> LLVM.Name -> m ()
@@ -507,7 +518,7 @@ trType t = case t of
     $  "The string type cannot be translated directly. "
     ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
-  Jlt.Array t0 -> LLVM.Struct [LLVM.I 32, LLVM.Array 0 (trType t0)]
+  Jlt.Array t0 -> arrayLLVM (trType t0) 
 
 builtinDecls :: [LLVM.Decl]
 builtinDecls =
@@ -542,6 +553,16 @@ builtinDecls =
     , LLVM.declArgs = [LLVM.I 32, LLVM.I 32]
     }
   ]
+
+-- | The type used to represent (dynamic) arrays in llvm.
+arrayLLVM :: LLVM.Type -> LLVM.Type
+arrayLLVM t = LLVM.Struct [LLVM.I 32, LLVM.Pointer t]
+
+-- | Grabs the llvm-type from the llvm-representation of an array.
+-- The inverse of `arrayLLVM`.
+elemTpLLVM :: LLVM.Type -> LLVM.Type
+elemTpLLVM (LLVM.Struct [_, t]) = t
+elemTpLLVM _ = undefined
 
 resultOfExpressionTp
   :: MonadCompile m
@@ -657,18 +678,35 @@ resultOfExpressionTp tp e = case e of
   Jlt.Dot e0 (Jlt.Ident i) -> do
     -- `r` is a pointer to an array.
     is <- execWriterT $ resultOfExpression e0
+    --r <- resultOfExpression e0
     unless (i == "length") (throwError (Generic $ "IMPOSSIBLE: " ++ i))
     -- let tpArrayLLVM = trType $ typeof e0
-    lastLoadToGep (const (LLVM.I 32)) [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] is
+    (_, n) <- lastLoadToGep (const (LLVM.I 32)) [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] is
+    return (Left n)
+    --r0 <- newReg
+    -- emitInstructions [LLVM.Load (LLVM.I 32) (LLVM.Pointer (LLVM.I 32)) r r0]
+    --emitComment "lastLoadToGep"
+    --return (Left r)
     --   [ LLVM.ExtractValue tpArrayLLVM r
     --     [intOp 0] r0
     --   ]
   Jlt.EIndex e0 idx -> do
     is <- execWriterT $ resultOfExpression e0
-    (_, v) <- typeValueOfIndex idx
+    --r <- resultOfExpression e0
     -- r0 <- newReg
     -- let tpArrayLLVM = trType $ typeof e0
-    lastLoadToGep elemTpLLVM [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1), (LLVM.I 32, v)] is
+    (LLVM.Pointer tp', r) <- lastLoadToGep elemTpLLVM [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1){-, (LLVM.I 32, v)-}] is
+    idx <- typeValueOfIndex idx
+    r0 <- newReg
+    r1 <- newReg
+    let dummy = LLVM.Double
+    emitInstructions
+      [ LLVM.GetElementPtr tp' (LLVM.Pointer tp') r [idx] r0
+      , LLVM.Load tp' (LLVM.Pointer tp') r0 r1
+      ]
+    return (Left r1)
+    --emitComment "lastLoadToGep"
+    --return r
       -- [ LLVM.ExtractValue tpArrayLLVM r
       --   [intOp 1, v] r0
       -- ]
@@ -683,18 +721,18 @@ splitLast (x:xs) = do
 -- | This is sort of a hack.
 lastLoadToGep :: MonadCompile m
   => (LLVM.Type -> LLVM.Type)
-  -> [(LLVM.Type, LLVM.Operand)] -> [AlmostInstruction] -> m LLVM.Operand
+  -> [(LLVM.Type, LLVM.Operand)] -> [AlmostInstruction] -> m (LLVM.Type, LLVM.Name)
 lastLoadToGep f ops is = do
   r <- newReg
-  tell $ case splitLast is of
-    Just (xs, Instr (LLVM.Load t0 t1 n0 n1)) -> let tp = f t0 in xs ++ map Instr [LLVM.GetElementPtr t0 t1 n0 ops n1, LLVM.Load tp (LLVM.Pointer tp) n1 r]
+  case splitLast is of
+    Just (xs, Instr (LLVM.Load t0 t1 n0 n1)) -> do
+      let tp = f t0
+      tell $ xs ++ map Instr
+        [ LLVM.GetElementPtr t0 t1 n0 ops n1
+        , LLVM.Load tp (LLVM.Pointer tp) n1 r
+        ]
+      return (tp, r)
     _ -> error "Last instruction was not load :("
-  return (Left r)
-
--- | Grabs the llvm-type from the llvm-representation of an array.
-elemTpLLVM :: LLVM.Type -> LLVM.Type
-elemTpLLVM (LLVM.Struct [_, (LLVM.Array _ t)]) = t
-elemTpLLVM _ = undefined
 
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of

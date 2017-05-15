@@ -163,6 +163,7 @@ data Instruction
   | Fcmp Comparison Type Operand Operand Name
   | Call Type Name [(Type, Operand)] Name
   | CallVoid Type Name [(Type, Operand)]
+  | BitCast Type Name Type Name
   | Commented Instruction
   | Comment String
   deriving (Show)
@@ -243,6 +244,8 @@ instance Pretty Instruction where
       pPrint trg <+> char '=' <+>
       text "extractvalue" <+> pPrint tp0 <+>
       pPrint nm <> char ',' <+> hsepBy (char ',') (map pPrintOp args)
+    BitCast t0 n0 t1 n1 -> pPrint n1 <+> char '=' <+> text "bitcast"
+      <+> pPrint t0 <+> pPrint n0 <+> text "to" <+> pPrint t1
     Commented i' -> char ';' <+> pPrint i'
     Comment s -> char ';' <+> text s
 
