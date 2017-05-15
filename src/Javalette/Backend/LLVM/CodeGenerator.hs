@@ -352,18 +352,22 @@ assign lv e = emitComment "assign" >> case lv of
     let reg = trNameToReg i
     idxLLVM <- typeValueOfIndex idx
     r0 <- newReg
+    r1 <- newReg
+    r2 <- newReg
     tpStructLLVM <- return
       . trType
       . Jlt.Array
       . typeof
       $ e
-    let tpElems = elemTpLLVM tpStructLLVM
+    let tpElems@(LLVM.Pointer tpElems') = elemTpLLVM tpStructLLVM
     emitInstructions
       [ LLVM.GetElementPtr tpStructLLVM (LLVM.Pointer tpStructLLVM) reg
-        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1), idxLLVM] r0
+        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
+      , LLVM.Load tpElems (LLVM.Pointer tpElems) r0 r1
+      , LLVM.GetElementPtr tpElems' (LLVM.Pointer tpElems') r1 [idxLLVM] r2
 --      , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
 --        [(LLVM.I 32, intOp 0), idxLLVM] r1
-      , LLVM.Store tpElems op (LLVM.Pointer tpElems) r0
+      , LLVM.Store tpElems' op (LLVM.Pointer tpElems') r2
       ]
   where
     tpJlt = typeof e
