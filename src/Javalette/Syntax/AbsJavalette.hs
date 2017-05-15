@@ -40,7 +40,7 @@ data Item
     = NoInit Ident | Init Ident Expr | InitObj Ident Constructor
   deriving (Eq, Ord, Show, Read)
 
-data Constructor = ArrayCon Type Expr
+data Constructor = TypeCon Type | ArrayCon Constructor Expr
   deriving (Eq, Ord, Show, Read)
 
 data LValue = LIdent Ident | LIndexed Ident Index

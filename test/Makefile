@@ -15,4 +15,5 @@ BUILD_DIR = $(shell stack path --project-root)/$(shell stack path --dist-dir)/bu
 
 test:   Grade
 	./Grade -g-no-pie -bLLVM $(BUILD_DIR) \
-		-x arrays1
+		-x arrays1 \
+		-x arrays2

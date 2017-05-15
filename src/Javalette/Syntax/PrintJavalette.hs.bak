@@ -137,7 +137,7 @@ instance Print LValue where
 
 instance Print Index where
   prt i e = case e of
-    Indx id -> prPrec i 0 (concatD [doc (showString "["), prt 0 id, doc (showString "]")])
+    Indx expr -> prPrec i 0 (concatD [doc (showString "["), prt 0 expr, doc (showString "]")])
 
 instance Print Type where
   prt i e = case e of

@@ -46,7 +46,7 @@ data Constructor = ArrayCon Type Expr
 data LValue = LIdent Ident | LIndexed Ident Index
   deriving (Eq, Ord, Show, Read)
 
-data Index = Indx Ident
+data Index = Indx Expr
   deriving (Eq, Ord, Show, Read)
 
 data Type

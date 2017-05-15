@@ -46,7 +46,8 @@ transItem x = case x of
   InitObj ident constructor -> failure x
 transConstructor :: Constructor -> Result
 transConstructor x = case x of
-  ArrayCon type_ expr -> failure x
+  TypeCon type_ -> failure x
+  ArrayCon constructor expr -> failure x
 transLValue :: LValue -> Result
 transLValue x = case x of
   LIdent ident -> failure x

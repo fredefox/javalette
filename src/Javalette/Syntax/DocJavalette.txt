@@ -91,7 +91,8 @@ All other symbols are terminals.
   |  |  **|**  | //Ident// ``=`` ``new`` //Constructor// 
   | //[Item]// | -> | //Item// 
   |  |  **|**  | //Item// ``,`` //[Item]// 
-  | //Constructor// | -> | //Type// ``[`` //Expr// ``]`` 
+  | //Constructor// | -> | //Type// 
+  |  |  **|**  | //Constructor// ``[`` //Expr// ``]`` 
   | //LValue// | -> | //Ident// 
   |  |  **|**  | //Ident// //Index// 
   | //Index// | -> | ``[`` //Expr// ``]`` 

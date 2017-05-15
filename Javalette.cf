@@ -52,7 +52,9 @@ For.       Stmt ::= "for" "(" Type Ident ":" Expr ")" Stmt ;
 
 SExp.      Stmt ::= Expr  ";" ;
 
-ArrayCon.  Constructor ::= Type "[" Expr "]" ;
+TypeCon.   Constructor ::= Type ;
+
+ArrayCon.  Constructor ::= Constructor "[" Expr "]" ;
 
 LIdent.    LValue ::= Ident ;
 

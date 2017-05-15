@@ -128,7 +128,8 @@ instance Print Item where
   prtList _ (x:xs) = (concatD [prt 0 x, doc (showString ","), prt 0 xs])
 instance Print Constructor where
   prt i e = case e of
-    ArrayCon type_ expr -> prPrec i 0 (concatD [prt 0 type_, doc (showString "["), prt 0 expr, doc (showString "]")])
+    TypeCon type_ -> prPrec i 0 (concatD [prt 0 type_])
+    ArrayCon constructor expr -> prPrec i 0 (concatD [prt 0 constructor, doc (showString "["), prt 0 expr, doc (showString "]")])
 
 instance Print LValue where
   prt i e = case e of

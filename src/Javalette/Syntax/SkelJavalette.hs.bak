@@ -53,7 +53,7 @@ transLValue x = case x of
   LIndexed ident index -> failure x
 transIndex :: Index -> Result
 transIndex x = case x of
-  Indx ident -> failure x
+  Indx expr -> failure x
 transType :: Type -> Result
 transType x = case x of
   Int -> failure x
