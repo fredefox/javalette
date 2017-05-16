@@ -107,7 +107,7 @@ instance Print Stmt where
     Empty -> prPrec i 0 (concatD [doc (showString ";")])
     BStmt blk -> prPrec i 0 (concatD [prt 0 blk])
     Decl type_ items -> prPrec i 0 (concatD [prt 0 type_, prt 0 items, doc (showString ";")])
-    Ass lvalue expr -> prPrec i 0 (concatD [prt 0 lvalue, doc (showString "="), prt 0 expr, doc (showString ";")])
+    Ass expr1 expr2 -> prPrec i 0 (concatD [prt 5 expr1, doc (showString "="), prt 0 expr2, doc (showString ";")])
     Incr id -> prPrec i 0 (concatD [prt 0 id, doc (showString "++"), doc (showString ";")])
     Decr id -> prPrec i 0 (concatD [prt 0 id, doc (showString "--"), doc (showString ";")])
     Ret expr -> prPrec i 0 (concatD [doc (showString "return"), prt 0 expr, doc (showString ";")])
@@ -130,11 +130,6 @@ instance Print Constructor where
   prt i e = case e of
     TypeCon type_ -> prPrec i 0 (concatD [prt 0 type_])
     ArrayCon constructor expr -> prPrec i 0 (concatD [prt 0 constructor, doc (showString "["), prt 0 expr, doc (showString "]")])
-
-instance Print LValue where
-  prt i e = case e of
-    LIdent id -> prPrec i 0 (concatD [prt 0 id])
-    LIndexed id index -> prPrec i 0 (concatD [prt 0 id, prt 0 index])
 
 instance Print Index where
   prt i e = case e of
@@ -163,8 +158,8 @@ instance Print Expr where
     EString str -> prPrec i 6 (concatD [prt 0 str])
     Neg expr -> prPrec i 5 (concatD [doc (showString "-"), prt 6 expr])
     Not expr -> prPrec i 5 (concatD [doc (showString "!"), prt 6 expr])
-    Dot expr id -> prPrec i 5 (concatD [prt 6 expr, doc (showString "."), prt 0 id])
-    EIndex expr index -> prPrec i 5 (concatD [prt 6 expr, prt 0 index])
+    Dot expr id -> prPrec i 6 (concatD [prt 6 expr, doc (showString "."), prt 0 id])
+    EIndex expr index -> prPrec i 6 (concatD [prt 6 expr, prt 0 index])
     EMul expr1 mulop expr2 -> prPrec i 4 (concatD [prt 4 expr1, prt 0 mulop, prt 5 expr2])
     EAdd expr1 addop expr2 -> prPrec i 3 (concatD [prt 3 expr1, prt 0 addop, prt 4 expr2])
     ERel expr1 relop expr2 -> prPrec i 2 (concatD [prt 2 expr1, prt 0 relop, prt 3 expr2])

@@ -10,6 +10,9 @@ module Javalette.TypeChecking
   , Infer(..)
   , staticControlFlowCheck
   , typecheck
+  , LValue(..)
+  , lvalue
+  , unlvalue
   ) where
 
 import Data.Map (Map)
@@ -266,12 +269,12 @@ typecheckStmt t s = case s of
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t')))
+    typecheckStmt t (Ass (EVar i) (EAdd (EVar i) Plus  (one t')))
   Decr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t')))
+    typecheckStmt t (Ass (EVar  i) (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -323,19 +326,46 @@ desugarFor t0 i e s0 = do
         ]
         ))
 
+data LValue = LValue Ident [Index]
 
-lookupTypeLValue :: LValue -> TypeChecker (Type, LValue)
-lookupTypeLValue lv = case lv of
-  LIdent i -> do
-    t <- lookupTypeVar i
-    return (t, lv)
-  LIndexed i idx -> do
-    t <- lookupTypeVar i
-    (idx', tp) <- infer idx
-    unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
-    case t of
-      Array t' -> return (t', LIndexed i idx')
-      _     -> throwError (GenericError "Cannot index into non-array type")
+lvalueErr :: Expr -> TypeChecker LValue
+lvalueErr e = case e of
+  EVar i -> return (LValue i [])
+  EIndex e' idx -> addIndex idx <$> lvalueErr e'
+  _ -> throwError $ GenericError "Not an l-value"
+
+lvalue :: Expr -> LValue
+lvalue e = case e of
+  EVar i -> LValue i []
+  EIndex e' idx -> addIndex idx (lvalue e')
+  _ -> error "IMPOSSIBLE - removed by typechecker"
+
+addIndex :: Index -> LValue -> LValue
+addIndex idx (LValue i idxs) = LValue i $ idxs ++ [idx]
+
+unlvalue :: LValue -> Expr
+unlvalue (LValue i idxs) = foldl EIndex (EVar i) idxs
+
+lookupTypeLValue :: Expr -> TypeChecker (Type, Expr)
+lookupTypeLValue e = do
+  lval <- lvalueErr e
+  (t, lval') <- lookupTypeLValue' lval
+  return (t, unlvalue lval')
+
+lookupTypeLValue' :: LValue -> TypeChecker (Type, LValue)
+lookupTypeLValue' lv@(LValue i idxs) =
+  case idxs of
+    [] -> do
+      t <- lookupTypeVar i
+      return (t, lv)
+    [idx] -> do
+      t <- lookupTypeVar i
+      (idx', tp) <- infer idx
+      unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
+      case t of
+        Array t' -> return (t', LValue i [idx'])
+        _     -> throwError (GenericError "Cannot index into non-array type")
+    _ -> error "Not yet implemented"
 
 instance TypeCheck Index where
 instance Infer Index where
@@ -649,7 +679,7 @@ inferStmt s = case s of
   For{} -> return Never
 
 -- TODO Unimplemented.
-assign :: LValue -> Expr -> TypeChecker ()
+assign :: Expr -> Expr -> TypeChecker ()
 assign _ _ = return ()
 incr, decr :: Ident -> TypeChecker ()
 incr _ = return ()

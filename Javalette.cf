@@ -32,7 +32,7 @@ InitObj.   Item ::= Ident "=" "new" Constructor ;
 
 separator nonempty Item "," ;
 
-Ass.       Stmt ::= LValue "=" Expr  ";" ;
+Ass.       Stmt ::= Expr5 "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
 
@@ -55,10 +55,6 @@ SExp.      Stmt ::= Expr  ";" ;
 TypeCon.   Constructor ::= Type ;
 
 ArrayCon.  Constructor ::= Constructor "[" Expr "]" ;
-
-LIdent.    LValue ::= Ident ;
-
-LIndexed.  LValue ::= Ident Index ;
 
 Indx.      Index ::= "[" Expr "]" ;
 
@@ -96,13 +92,13 @@ EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
 EString.   Expr6 ::= String ;
 
+Dot.       Expr6 ::= Expr6 "." Ident ;
+
+EIndex.    Expr6 ::= Expr6 Index;
+
 Neg.       Expr5 ::= "-" Expr6 ;
 
 Not.       Expr5 ::= "!" Expr6 ;
-
-Dot.       Expr5 ::= Expr6 "." Ident ;
-
-EIndex.    Expr5 ::= Expr6 Index;
 
 EMul.      Expr4 ::= Expr4 MulOp Expr5 ;
 

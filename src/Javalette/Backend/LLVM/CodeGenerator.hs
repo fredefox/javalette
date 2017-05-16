@@ -18,6 +18,7 @@ import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
+import Javalette.TypeChecking (LValue(..), lvalue, unlvalue)
 
 import Javalette.Debug
 
@@ -341,13 +342,13 @@ emitTerminator :: MonadWriter [AlmostInstruction] m => LLVM.TermInstr -> m ()
 emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
-  => Jlt.LValue -> Jlt.Expr -> m ()
-assign lv e = emitComment "assign" >> case lv of
-  Jlt.LIdent i -> do
+  => Jlt.Expr -> Jlt.Expr -> m ()
+assign lv e = emitComment "assign" >> case lvalue lv of
+  LValue i [] -> do
     op <- resultOfExpression e
     let reg = trNameToReg i
     emitInstructions [LLVM.Store tpLLVM op (LLVM.Pointer tpLLVM) reg]
-  Jlt.LIndexed i idx -> do
+  LValue i [idx] -> do
     op <- resultOfExpression e
     let reg = trNameToReg i
     idxLLVM <- typeValueOfIndex idx
@@ -369,6 +370,7 @@ assign lv e = emitComment "assign" >> case lv of
 --        [(LLVM.I 32, intOp 0), idxLLVM] r1
       , LLVM.Store tpElems' op (LLVM.Pointer tpElems') r2
       ]
+  _ -> error "Not yet implemented"
   where
     tpJlt = typeof e
     tpLLVM = trType tpJlt

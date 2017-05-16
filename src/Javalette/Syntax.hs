@@ -45,9 +45,6 @@ instance Pretty MulOp where
 instance Pretty RelOp where
   pPrint = pPrintConv
 
-instance Pretty LValue where
-  pPrint = pPrintConv
-
 instance Pretty Index where
   pPrint = pPrintConv
 
