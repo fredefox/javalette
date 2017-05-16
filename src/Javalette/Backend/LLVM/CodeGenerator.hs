@@ -346,34 +346,39 @@ assign :: MonadCompile m
 assign lv e = emitComment "assign" >> case lvalue lv of
   LValue i [] -> do
     op <- resultOfExpression e
-    let reg = trNameToReg i
+    let reg    = trNameToReg i
+        tpLLVM = trType (typeof e)
     emitInstructions [LLVM.Store tpLLVM op (LLVM.Pointer tpLLVM) reg]
-  LValue i [idx] -> do
+  LValue i idxs -> do
     op <- resultOfExpression e
-    let reg = trNameToReg i
-    idxLLVM <- typeValueOfIndex idx
-    r0 <- newReg
-    r1 <- newReg
-    r2 <- newReg
-    tpStructLLVM <- return
-      . trType
-      . Jlt.Array
-      . typeof
-      $ e
-    let tpElems@(LLVM.Pointer tpElems') = elemTpLLVM tpStructLLVM
+    let tpElemsJlt  = typeof e
+        tpElemsLLVM = trType tpElemsJlt
+        nestedArrayTypes
+          = reverse
+          . take (length idxs + 1)
+          . iterate arrayLLVM
+          $ tpElemsLLVM
+        loadArrayPointer
+          :: MonadCompile m
+          => LLVM.Name -> [((LLVM.Type, LLVM.Operand), LLVM.Type)] -> m LLVM.Name
+        loadArrayPointer reg [] = return reg
+        loadArrayPointer reg ((idx, tpStructLLVM@(LLVM.Struct (_:LLVM.Pointer tpElems:_))):idxs) = do
+          r0 <- newReg ; r1 <- newReg ; r2 <- newReg
+          let p = LLVM.Pointer
+              pp = p . p
+          emitInstructions
+            [ LLVM.GetElementPtr tpStructLLVM (p tpStructLLVM) reg
+              [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
+            , LLVM.Load (p tpElems) (pp tpElems) r0 r1
+            , LLVM.GetElementPtr tpElems (p tpElems) r1 [idx] r2
+            ]
+          loadArrayPointer r2 idxs
+    idxsLLVM <- mapM typeValueOfIndex idxs
+--          . iterateN (length idxsLLVM) Jlt.Array
+    ptr <- loadArrayPointer (trNameToReg i) (zip idxsLLVM nestedArrayTypes)
     emitInstructions
-      [ LLVM.GetElementPtr tpStructLLVM (LLVM.Pointer tpStructLLVM) reg
-        [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
-      , LLVM.Load tpElems (LLVM.Pointer tpElems) r0 r1
-      , LLVM.GetElementPtr tpElems' (LLVM.Pointer tpElems') r1 [idxLLVM] r2
---      , LLVM.GetElementPtr tpArrayLLVM (LLVM.Pointer tpArrayLLVM) r0
---        [(LLVM.I 32, intOp 0), idxLLVM] r1
-      , LLVM.Store tpElems' op (LLVM.Pointer tpElems') r2
+      [ LLVM.Store tpElemsLLVM op (LLVM.Pointer tpElemsLLVM) ptr
       ]
-  _ -> error "Not yet implemented"
-  where
-    tpJlt = typeof e
-    tpLLVM = trType tpJlt
 
 intOp :: Int -> LLVM.Operand
 intOp = Right . LLVM.ValInt
@@ -381,6 +386,7 @@ intOp = Right . LLVM.ValInt
 emitComment :: MonadWriter [AlmostInstruction] m => String -> m ()
 emitComment s = emitInstructions [LLVM.Comment s]
 
+-- Surely the type of the index will always be an integer.
 typeValueOfIndex :: MonadCompile m => Jlt.Index -> m (LLVM.Type, LLVM.Operand)
 typeValueOfIndex (Jlt.Indx e) = do
   r <- resultOfExpression e
