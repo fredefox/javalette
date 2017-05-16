@@ -358,14 +358,21 @@ lookupTypeLValue' lv@(LValue i idxs) =
     [] -> do
       t <- lookupTypeVar i
       return (t, lv)
-    [idx] -> do
+    _ -> do
       t <- lookupTypeVar i
-      (idx', tp) <- infer idx
-      unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
-      case t of
-        Array t' -> return (t', LValue i [idx'])
-        _     -> throwError (GenericError "Cannot index into non-array type")
-    _ -> error "Not yet implemented"
+      (idxs', tps) <- unzip <$> mapM infer idxs
+      unless (all (== Int) tps) $ throwError $ GenericError "Indexes must be integers"
+      case intoArray (length idxs) t of
+        Just t' -> return (t', LValue i idxs')
+        Nothing -> throwError (GenericError "Cannot index into non-array type")
+
+-- | `intoArray n` gets the type nested at level `n` inside a multidimensional
+-- array.
+intoArray :: Int -> Type -> Maybe Type
+intoArray n (Array t)
+  | n > 1     = intoArray (n - 1) t
+  | otherwise = Just t
+intoArray _ _ = Nothing
 
 instance TypeCheck Index where
 instance Infer Index where
