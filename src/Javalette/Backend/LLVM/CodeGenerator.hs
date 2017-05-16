@@ -430,9 +430,65 @@ itemInit jltType itm = emitComment "init" >> do
     Jlt.Init _ e -> do
       reg0 <- resultOfExpression e
       varInit tp reg reg0
-    Jlt.InitObj _ (Jlt.ArrayCon _ e) -> do
+    Jlt.InitObj _ (Jlt.ArrayCon Jlt.TypeCon{} e) -> do
       len <- resultOfExpression e
       arrayInit tp (typeOfElements jltType) reg len
+    Jlt.InitObj _ cs -> do
+      cts <- conTypes cs
+      emitComment "nested arrays"
+      arraysInit reg cts
+
+arraysInit :: MonadCompile m => LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> m ()
+arraysInit n xs@((t, o):_)= do
+  emitInstructions [ LLVM.Alloca t n ]
+  go n xs
+  where
+    go _ [_] = return ()
+    go n ((t, o):xs) = do
+      n' <- arrayInit' t n o
+      go n' xs
+
+-- It should be the case that
+--
+--     arrayInit tp _ = (void.) . arrayInit' tp
+--
+arrayInit' :: MonadCompile m => LLVM.Type -> LLVM.Name -> LLVM.Operand -> m LLVM.Name
+arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array len = do
+  r0 <- newReg
+  r1 <- newReg
+  r2 <- newReg
+  r3 <- newReg
+  lengthOfArrayLLVM structTp array r0
+  let artp = sndStructLLVM structTp
+      i8   = LLVM.I 8
+      i8p  = LLVM.Pointer i8
+  emitInstructions
+    [ LLVM.Store (LLVM.I 32) len (LLVM.Pointer (LLVM.I 32)) r0
+    , LLVM.GetElementPtr structTp (LLVM.Pointer structTp) array [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r1
+    , LLVM.Call i8p (LLVM.Global "calloc")
+      [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r2
+    , LLVM.BitCast i8p r2 artp r3
+    , LLVM.Store artp (Left r3) (LLVM.Pointer artp) r1
+    ]
+  return r3
+  where
+    sizeOf t = Right $ LLVM.ValInt $ case t of
+      LLVM.I n -> n `div` 8
+      LLVM.Double -> 8
+      -- TODO!
+      x -> 42
+    sndStructLLVM (LLVM.Struct (_:x:_)) = x
+
+-- | Returns the list of structs representing arrays that must be initialized
+-- along with its length.
+conTypes :: MonadCompile m => Jlt.Constructor -> m [(LLVM.Type, LLVM.Operand)]
+conTypes c = case c of
+  Jlt.ArrayCon c' e -> do
+      len <- resultOfExpression e
+      tps@((tp, l):_) <- case c' of
+          Jlt.TypeCon t -> return [(trType t, len)]
+          _             -> conTypes c'
+      return $ (arrayLLVM tp,l):tps
 
 typeOfElements :: Jlt.Type -> LLVM.Type
 typeOfElements t = case t of
@@ -471,6 +527,8 @@ arrayInit structTp arrayElemTp array len = do
     sizeOf t = Right $ LLVM.ValInt $ case t of
       LLVM.I n -> n `div` 8
       LLVM.Double -> 8
+      -- TODO!
+      x -> error . show $ x
     sndStructLLVM (LLVM.Struct (_:x:_)) = x
 
 lengthOfArrayLLVM :: MonadCompile m

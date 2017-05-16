@@ -482,7 +482,11 @@ typecheckConstructor c = case c of
     (e', t') <- infer e
     unless (t' == Int)
       $ throwError (GenericError "Length of array must be an integer")
-    return (ArrayCon tp e')
+    tp' <- case tp of
+      TypeCon{} -> return tp
+      ArrayCon{} -> typecheckConstructor tp
+    return (ArrayCon tp' e')
+  TypeCon{} -> throwError $ GenericError "Can only create objects"
 
 instance TypeCheck Expr where
 instance Infer Expr where
