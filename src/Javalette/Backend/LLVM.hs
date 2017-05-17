@@ -75,7 +75,7 @@ compile' opts fp = ioStuff . compileProg
           rt     = runtime opts
       doLink     [fp <.> "bc", rt] (linked <.> "bc")
       doLlc (linked <.> "bc")
-      doCompile (linked <.> "o")
+      doCompile (linked <.> "o") fp
 
 putStrLnStdErr :: String -> IO ()
 putStrLnStdErr = hPutStrLn stderr
@@ -100,10 +100,10 @@ doLink :: [FilePath] -> FilePath -> IO ()
 doLink fs out = echoCommand (readProcess llvmLinkCmd (fs ++ ["-o", out]) [])
 
 compileCmd :: String
-compileCmd = "clang"
+compileCmd = "gcc"
 
 doLlc :: FilePath -> IO ()
 doLlc f = echoCommand (readProcess llvmCompileCmd [f, "-filetype=obj"] [])
 
-doCompile :: FilePath -> IO ()
-doCompile f = echoCommand (readProcess compileCmd [f] [])
+doCompile :: FilePath -> FilePath -> IO ()
+doCompile obj out = echoCommand (readProcess compileCmd [obj, "-no-pie", "-o", out] [])
