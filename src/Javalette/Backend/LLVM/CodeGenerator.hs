@@ -441,19 +441,66 @@ itemInit jltType itm = emitComment "init" >> do
 arraysInit :: MonadCompile m => LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> m ()
 arraysInit n xs@((t, o):_)= do
   emitInstructions [ LLVM.Alloca t n ]
+  let os = map snd xs
+  void $ arrayInit' t n os
+{-
+arraysInit n xs@((t, o):_)= do
+  emitInstructions [ LLVM.Alloca t n ]
   go n xs
   where
     go _ [_] = return ()
     go n ((t, o):xs) = do
       n' <- arrayInit' t n o
       go n' xs
+-}
+
+llvmLoop :: MonadCompile m => LLVM.Operand -> (LLVM.Operand -> m a) -> m ()
+llvmLoop len act = do
+  counter <- newCounter
+  start <- newLabel
+  emitTerminator $ LLVM.Branch start
+  emitLabel start
+  cVal <- incrCounter counter
+  _ <- act cVal
+  r0 <- newReg
+  emitInstructions
+    [ LLVM.Icmp LLVM.ULT (LLVM.I 32) cVal len r0
+    ]
+  stop  <- newLabel
+  emitTerminator $ LLVM.BranchCond (Left r0) start stop
+  emitLabel stop
+
+newCounter :: MonadCompile m => m LLVM.Name
+newCounter = do
+  r <- newReg
+  let i32 = LLVM.I 32
+      i32p = LLVM.Pointer i32
+  emitInstructions
+    [ LLVM.Alloca i32 r
+    , LLVM.Store i32 (intOp 0) i32p r
+    ]
+  return r
+
+-- | Returns the value that the counter had before incrementing it.
+incrCounter :: MonadCompile m => LLVM.Name -> m LLVM.Operand
+incrCounter n = do
+  r0 <- newReg
+  r1 <- newReg
+  let i32 = LLVM.I 32
+      i32p = LLVM.Pointer i32
+  emitInstructions
+    [ LLVM.Load i32 i32p n r0
+    , LLVM.BinOp LLVM.Add i32 (Left r0) (intOp 1) r1
+    , LLVM.Store i32 (Left r1) i32p n
+    ]
+  return (Left r1)
 
 -- It should be the case that
 --
 --     arrayInit tp _ = (void.) . arrayInit' tp
 --
-arrayInit' :: MonadCompile m => LLVM.Type -> LLVM.Name -> LLVM.Operand -> m LLVM.Name
-arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array len = do
+arrayInit' :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
+arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array (len:lens) = do
   r0 <- newReg
   r1 <- newReg
   r2 <- newReg
@@ -461,23 +508,41 @@ arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array len = do
   lengthOfArrayLLVM structTp array r0
   let artp = sndStructLLVM structTp
       i8   = LLVM.I 8
-      i8p  = LLVM.Pointer i8
+      p    = LLVM.Pointer
+      i8p  = p i8
   emitInstructions
     [ LLVM.Store (LLVM.I 32) len (LLVM.Pointer (LLVM.I 32)) r0
     , LLVM.GetElementPtr structTp (LLVM.Pointer structTp) array [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r1
-    , LLVM.Call i8p (LLVM.Global "calloc")
-      [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r2
-    , LLVM.BitCast i8p r2 artp r3
-    , LLVM.Store artp (Left r3) (LLVM.Pointer artp) r1
     ]
-  return r3
+  llvmLoop len $ \idx -> do
+    nstdp <- newReg
+    let nestedTp = p arrayElemTp
+    emitInstructions
+      [ LLVM.GetElementPtr nestedTp (p nestedTp) r1 [(LLVM.I 32, idx)] nstdp
+      ]
+    case arrayElemTp of
+      LLVM.Struct{} -> do
+        nstd <- newReg
+        emitInstructions
+          [ LLVM.Load nestedTp (p nestedTp) nstdp nstd
+          , LLVM.Comment $ "now we wanna init "
+            ++ prettyShow nstd ++ " which has type " ++ (prettyShow $ p arrayElemTp)
+          ]
+        arrayInit' arrayElemTp nstd lens
+      _             -> do
+        emitInstructions
+          [ LLVM.Comment $ "hit base-case: " ++ prettyShow arrayElemTp
+          , LLVM.Call i8p (LLVM.Global "calloc")
+            [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r2
+          , LLVM.BitCast i8p r2 artp r3
+          , LLVM.Store artp (Left r3) (LLVM.Pointer artp) nstdp
+          ]
   where
     sizeOf t = Right $ LLVM.ValInt $ case t of
       LLVM.I n -> n `div` 8
       LLVM.Double -> 8
-      -- TODO!
-      x -> 42
     sndStructLLVM (LLVM.Struct (_:x:_)) = x
+
 
 -- | Returns the list of structs representing arrays that must be initialized
 -- along with its length.
