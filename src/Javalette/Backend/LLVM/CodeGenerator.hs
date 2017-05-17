@@ -324,9 +324,6 @@ trStmt fallThrough s = case s of
   where
     cont = trStmt fallThrough
 
-emitInstructions :: MonadWriter [AlmostInstruction]  m => [LLVM.Instruction] -> m ()
-emitInstructions = tell . map Instr
-
 jumpTo :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
 jumpTo lbl = emitTerminator (LLVM.Branch lbl)
 
@@ -343,12 +340,12 @@ emitTerminator = tell . pure . TermInstr
 
 assign :: MonadCompile m
   => Jlt.Expr -> Jlt.Expr -> m ()
-assign lv e = emitComment "assign" >> case lvalue lv of
+assign lv e = instrComment "assign" >> case lvalue lv of
   LValue i [] -> do
     op <- resultOfExpression e
     let reg    = trNameToReg i
         tpLLVM = trType (typeof e)
-    emitInstructions [LLVM.Store tpLLVM op (LLVM.Pointer tpLLVM) reg]
+    emitInstruction $ LLVM.Store tpLLVM op (LLVM.Pointer tpLLVM) reg
   LValue i idxs -> do
     op <- resultOfExpression e
     let tpElemsJlt  = typeof e
@@ -363,28 +360,19 @@ assign lv e = emitComment "assign" >> case lvalue lv of
           => LLVM.Name -> [((LLVM.Type, LLVM.Operand), LLVM.Type)] -> m LLVM.Name
         loadArrayPointer reg [] = return reg
         loadArrayPointer reg ((idx, tpStructLLVM@(LLVM.Struct (_:LLVM.Pointer tpElems:_))):idxs) = do
-          r0 <- newReg ; r1 <- newReg ; r2 <- newReg
           let p = LLVM.Pointer
-              pp = p . p
-          emitInstructions
-            [ LLVM.GetElementPtr tpStructLLVM (p tpStructLLVM) reg
-              [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r0
-            , LLVM.Load (p tpElems) (pp tpElems) r0 r1
-            , LLVM.GetElementPtr tpElems (p tpElems) r1 [idx] r2
-            ]
+          r0 <- instrGep tpStructLLVM reg
+              [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)]
+          r1 <- instrLoad (p tpElems) r0
+          r2 <- instrGep tpElems r1 [idx]
           loadArrayPointer r2 idxs
     idxsLLVM <- mapM typeValueOfIndex idxs
 --          . iterateN (length idxsLLVM) Jlt.Array
     ptr <- loadArrayPointer (trNameToReg i) (zip idxsLLVM nestedArrayTypes)
-    emitInstructions
-      [ LLVM.Store tpElemsLLVM op (LLVM.Pointer tpElemsLLVM) ptr
-      ]
+    instrStore tpElemsLLVM op ptr
 
 intOp :: Int -> LLVM.Operand
 intOp = Right . LLVM.ValInt
-
-emitComment :: MonadWriter [AlmostInstruction] m => String -> m ()
-emitComment s = emitInstructions [LLVM.Comment s]
 
 -- Surely the type of the index will always be an integer.
 typeValueOfIndex :: MonadCompile m => Jlt.Index -> m (LLVM.Type, LLVM.Operand)
@@ -411,13 +399,13 @@ cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
 cond e t f = do
   op <- resultOfExpression e
-  emitTerminator (LLVM.BranchCond op t f)
+  emitTerminator $ LLVM.BranchCond op t f
 
 -- | Assumes that the item is already initialized and exists in scope.
 itemInit
   :: MonadCompile m
   => Jlt.Type -> Jlt.Item -> m ()
-itemInit jltType itm = emitComment "init" >> do
+itemInit jltType itm = instrComment "init" >> do
   -- (reg, tp) <- undefined -- lookupItem itm >>= maybeToErr' (Generic "var init - cant find")
   let tp :: LLVM.Type
       tp = trType jltType
@@ -435,12 +423,12 @@ itemInit jltType itm = emitComment "init" >> do
       arrayInit tp (typeOfElements jltType) reg len
     Jlt.InitObj _ cs -> do
       cts <- conTypes cs
-      emitComment "nested arrays"
+      instrComment "nested arrays"
       arraysInit reg cts
 
 arraysInit :: MonadCompile m => LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> m ()
 arraysInit n xs@((t, o):_)= do
-  emitInstructions [ LLVM.Alloca t n ]
+  emitInstruction $ LLVM.Alloca t n
   let os = map snd xs
   void $ arrayInit' t n os
 {-
@@ -462,38 +450,28 @@ llvmLoop len act = do
   emitLabel start
   cVal <- incrCounter counter
   _ <- act cVal
-  r0 <- newReg
-  emitInstructions
-    [ LLVM.Icmp LLVM.ULT (LLVM.I 32) cVal len r0
-    ]
+  r0 <- instrIcmp LLVM.ULT (LLVM.I 32) cVal len
   stop  <- newLabel
   emitTerminator $ LLVM.BranchCond (Left r0) start stop
   emitLabel stop
 
 newCounter :: MonadCompile m => m LLVM.Name
 newCounter = do
-  r <- newReg
   let i32 = LLVM.I 32
-      i32p = LLVM.Pointer i32
-  emitInstructions
-    [ LLVM.Alloca i32 r
-    , LLVM.Store i32 (intOp 0) i32p r
-    ]
+  r <- instrAlloca i32
+  instrStore i32 (intOp 0) r
   return r
 
 -- | Returns the value that the counter had before incrementing it.
 incrCounter :: MonadCompile m => LLVM.Name -> m LLVM.Operand
 incrCounter n = do
-  r0 <- newReg
-  r1 <- newReg
   let i32 = LLVM.I 32
-      i32p = LLVM.Pointer i32
-  emitInstructions
-    [ LLVM.Load i32 i32p n r0
-    , LLVM.BinOp LLVM.Add i32 (Left r0) (intOp 1) r1
-    , LLVM.Store i32 (Left r1) i32p n
-    ]
-  return (Left r1)
+  r0 <- instrLoad i32 n
+  r1 <- instrBinOp LLVM.Add i32 (Left r0) (intOp 1)
+  instrStore i32 (Left r1) n
+  -- TODO: Think it has to be `r0` here
+  -- return (Left r1)
+  return (Left r0)
 
 -- It should be the case that
 --
@@ -502,47 +480,35 @@ incrCounter n = do
 arrayInit' :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
 arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array (len:lens) = do
   r0 <- newReg
-  r1 <- newReg
-  r2 <- newReg
-  r3 <- newReg
   lengthOfArrayLLVM structTp array r0
-  let artp = sndStructLLVM structTp
-      i8   = LLVM.I 8
-      p    = LLVM.Pointer
-      i8p  = p i8
-  emitInstructions
-    [ LLVM.Store (LLVM.I 32) len (LLVM.Pointer (LLVM.I 32)) r0
-    , LLVM.GetElementPtr structTp (LLVM.Pointer structTp) array [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)] r1
-    ]
+  -- r1 <- newReg
+  instrStore (LLVM.I 32) len r0
+  r1 <- instrGep structTp array [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)]
   llvmLoop len $ \idx -> do
-    nstdp <- newReg
     let nestedTp = p arrayElemTp
-    emitInstructions
-      [ LLVM.GetElementPtr nestedTp (p nestedTp) r1 [(LLVM.I 32, idx)] nstdp
-      ]
+    nstdp <- instrGep nestedTp r1 [(LLVM.I 32, idx)]
+    ralc <- instrAlloca arrayElemTp
+    instrStore nestedTp (Left ralc) nstdp
     case arrayElemTp of
       LLVM.Struct{} -> do
-        nstd <- newReg
-        emitInstructions
-          [ LLVM.Load nestedTp (p nestedTp) nstdp nstd
-          , LLVM.Comment $ "now we wanna init "
-            ++ prettyShow nstd ++ " which has type " ++ (prettyShow $ p arrayElemTp)
-          ]
+        nstd <- instrLoad nestedTp nstdp
+        instrComment $ "now we wanna init "
+            ++ prettyShow nstd ++ " which has type " ++ prettyShow (p arrayElemTp)
         arrayInit' arrayElemTp nstd lens
       _             -> do
-        emitInstructions
-          [ LLVM.Comment $ "hit base-case: " ++ prettyShow arrayElemTp
-          , LLVM.Call i8p (LLVM.Global "calloc")
-            [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)] r2
-          , LLVM.BitCast i8p r2 artp r3
-          , LLVM.Store artp (Left r3) (LLVM.Pointer artp) nstdp
-          ]
+        instrComment $ "hit base-case: " ++ prettyShow arrayElemTp
+        r2 <- instrCall i8p (LLVM.Global "calloc")
+            [(LLVM.I 32, len), (LLVM.I 32, sizeOf arrayElemTp)]
+        r3 <- instrBitCast i8p r2 nestedTp
+        instrStore nestedTp (Left r3) nstdp
   where
     sizeOf t = Right $ LLVM.ValInt $ case t of
       LLVM.I n -> n `div` 8
       LLVM.Double -> 8
-    sndStructLLVM (LLVM.Struct (_:x:_)) = x
-
+      _ -> error "malloc will not be called on other types"
+    i8   = LLVM.I 8
+    p    = LLVM.Pointer
+    i8p  = p i8
 
 -- | Returns the list of structs representing arrays that must be initialized
 -- along with its length.
@@ -550,10 +516,10 @@ conTypes :: MonadCompile m => Jlt.Constructor -> m [(LLVM.Type, LLVM.Operand)]
 conTypes c = case c of
   Jlt.ArrayCon c' e -> do
       len <- resultOfExpression e
-      tps@((tp, l):_) <- case c' of
+      tps@((tp, _):_) <- case c' of
           Jlt.TypeCon t -> return [(trType t, len)]
           _             -> conTypes c'
-      return $ (arrayLLVM tp,l):tps
+      return $ (arrayLLVM tp,len):tps
 
 typeOfElements :: Jlt.Type -> LLVM.Type
 typeOfElements t = case t of
@@ -592,8 +558,6 @@ arrayInit structTp arrayElemTp array len = do
     sizeOf t = Right $ LLVM.ValInt $ case t of
       LLVM.I n -> n `div` 8
       LLVM.Double -> 8
-      -- TODO!
-      x -> error . show $ x
     sndStructLLVM (LLVM.Struct (_:x:_)) = x
 
 lengthOfArrayLLVM :: MonadCompile m
@@ -704,9 +668,8 @@ resultOfExpressionTp
   => Jlt.Type -> Jlt.Expr -> m LLVM.Operand
 resultOfExpressionTp tp e = case e of
   Jlt.EVar i -> do
-    r <- newReg
     let tp' = trType tp
-    emitInstructions [LLVM.Load tp' (LLVM.Pointer tp') (trNameToReg i) r]
+    r <- instrLoad tp' (trNameToReg i)
     return (Left r)
   Jlt.ELitInt x -> return $ Right (LLVM.ValInt $ fromInteger x)
   Jlt.ELitDoub d -> return $ Right (LLVM.ValDoub d)
@@ -792,23 +755,20 @@ resultOfExpressionTp tp e = case e of
     return (Left r)
   Jlt.Neg e0 -> do
     r0 <- resultOfExpression e0
-    r <- newReg
     let tp' = trType tp
-    emitInstructions [LLVM.BinOp (addOp Jlt.Minus tp') tp' (zero tp') r0 r]
+    r <- instrBinOp (addOp Jlt.Minus tp') tp' (zero tp') r0
     return (Left r)
   Jlt.Not e0 -> do
     r0 <- resultOfExpression e0
-    r <- newReg
     let tp' = trType tp
         llvmTrue = LLVM.ValInt 1
-    emitInstructions [LLVM.BinOp LLVM.Xor tp' r0 (Right llvmTrue) r]
+    r <- instrBinOp LLVM.Xor tp' r0 (Right llvmTrue)
     return (Left r)
   Jlt.EString s -> do
     sReg <- lookupString s
-    r <- newReg
     let tp' = stringType s
         path = [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)]
-    emitInstructions [LLVM.GetElementPtr tp' (LLVM.Pointer tp') sReg path r]
+    r <- instrGep tp' sReg path
     return (Left r)
   Jlt.Dot e0 (Jlt.Ident i) -> do
     -- `r` is a pointer to an array.
@@ -820,7 +780,7 @@ resultOfExpressionTp tp e = case e of
     return (Left n)
     --r0 <- newReg
     -- emitInstructions [LLVM.Load (LLVM.I 32) (LLVM.Pointer (LLVM.I 32)) r r0]
-    --emitComment "lastLoadToGep"
+    --instrComment "lastLoadToGep"
     --return (Left r)
     --   [ LLVM.ExtractValue tpArrayLLVM r
     --     [intOp 0] r0
@@ -840,7 +800,7 @@ resultOfExpressionTp tp e = case e of
       , LLVM.Load tp' (LLVM.Pointer tp') r0 r1
       ]
     return (Left r1)
-    --emitComment "lastLoadToGep"
+    --instrComment "lastLoadToGep"
     --return r
       -- [ LLVM.ExtractValue tpArrayLLVM r
       --   [intOp 1, v] r0
@@ -958,3 +918,47 @@ typeerror = E.throw . TypeError
 {-# INLINE impossibleRemoved #-}
 impossibleRemoved :: a
 impossibleRemoved = typeerror "removed by typechecker"
+
+
+-- Helper methods for instructions
+
+emitInstructions :: MonadWriter [AlmostInstruction]  m => [LLVM.Instruction] -> m ()
+emitInstructions = tell . map Instr
+
+emitInstruction :: MonadWriter [AlmostInstruction] m => LLVM.Instruction -> m ()
+emitInstruction = emitInstructions . pure
+
+instrAssgn :: MonadCompile m => (LLVM.Name -> LLVM.Instruction) -> m LLVM.Name
+instrAssgn f = do
+  r <- newReg
+  emitInstruction . f $ r
+  return r
+
+instrBinOp :: MonadCompile m => LLVM.Op -> LLVM.Type -> LLVM.Operand -> LLVM.Operand -> m LLVM.Name
+instrBinOp binOp tp op0 op1 = instrAssgn $ LLVM.BinOp binOp tp op0 op1
+
+instrAlloca
+  :: MonadCompile m
+  => LLVM.Type -> m LLVM.Name
+instrAlloca tp = instrAssgn $ LLVM.Alloca tp
+
+instrLoad
+  :: MonadCompile m
+  => LLVM.Type
+  -> LLVM.Name -> m LLVM.Name
+instrLoad t0 n = instrAssgn $ LLVM.Load t0 (LLVM.Pointer t0) n
+
+instrGep t0 n ops = instrAssgn $ LLVM.GetElementPtr t0 (LLVM.Pointer t0) n ops
+
+instrStore t0 op n = emitInstruction $ LLVM.Store t0 op (LLVM.Pointer t0) n
+
+instrIcmp c t op0 op1 = instrAssgn $ LLVM.Icmp c t op0 op1
+
+instrFcmp c t op0 op1 = instrAssgn $ LLVM.Fcmp c t op0 op1
+
+instrCall t n ops = instrAssgn $ LLVM.Call t n ops
+
+instrBitCast t0 n t1 = instrAssgn $ LLVM.BitCast t0 n t1
+
+instrComment :: MonadCompile m => String -> m ()
+instrComment = emitInstruction . LLVM.Comment
