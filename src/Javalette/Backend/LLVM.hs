@@ -8,6 +8,7 @@ module Javalette.Backend.LLVM
 
 import System.IO
 import System.FilePath
+import System.IO.Temp
 import System.Process
 import Options.Applicative
 import Data.Semigroup
@@ -55,9 +56,7 @@ optParser = StdOpts.parseArgsAdditional $ LLVMOpts
 -- [Agda.Compiler.Backend.parseBackendOptions]:
 --   https://github.com/agda/agda/blob/master/src/full/Agda/Compiler/Backend.hs#L119
 compile :: LLVMOpts -> FilePath -> Jlt.Prog -> IO ()
-compile _ = compile' cheat
-  where
-    cheat = LLVMOpts "lib/runtime.bc" True
+compile opts = compile' opts
 
 compile' :: LLVMOpts -> FilePath -> Jlt.Prog -> IO ()
 compile' opts fp = ioStuff . compileProg
@@ -70,9 +69,8 @@ compile' opts fp = ioStuff . compileProg
       writeFile  (fp <.> "ll") assembly
       doAssemble (fp <.> "ll")
       when (optCompile opts) cmpl
-    cmpl = do
-      let linked = fp ++ "-linked"
-          rt     = runtime opts
+    cmpl = withSystemTempDirectory (fp ++ "-linked") $ \linked -> do
+      let rt     = runtime opts
       doLink     [fp <.> "bc", rt] (linked <.> "bc")
       doLlc (linked <.> "bc")
       doCompile (linked <.> "o") fp

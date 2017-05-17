@@ -50,9 +50,10 @@ library
                      , filepath >= 1.4.1.1
                      , free >= 4.12.0
                      , mtl >= 2.2.1
+                     , optparse-applicative >= 0.13.2.0
                      , pretty >= 1.1.3.3
                      , process >= 1.4.3.0
-                     , optparse-applicative >= 0.13.2.0
+                     , temporary >= 1.2.0.4
   default-language:    Haskell2010
 
 executable jlc
