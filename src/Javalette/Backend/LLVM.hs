@@ -32,7 +32,6 @@ backend = Backend
 
 data LLVMOpts = LLVMOpts
   { runtime :: FilePath
-  , optCompile :: Bool
   }
 
 optParser :: ParserInfo (StdOpts.Args LLVMOpts)
@@ -43,11 +42,6 @@ optParser = StdOpts.parseArgsAdditional $ LLVMOpts
     <> metavar "RUNTIME"
     <> help "Path to files to link against"
     <> value "lib/runtime.bc"
-    )
-  <*> switch
-    (  long "compile"
-    <> short 'c'
-    <> help "Also invoke the compiler"
     )
 
 -- I don't know how combine the parser defined by a backend with the main
@@ -68,12 +62,11 @@ compile' opts fp = ioStuff . compileProg
       putStrLn assembly
       writeFile  (fp <.> "ll") assembly
       doAssemble (fp <.> "ll")
-      when (optCompile opts) cmpl
-    cmpl = withSystemTempDirectory (fp ++ "-linked") $ \linked -> do
-      let rt     = runtime opts
-      doLink     [fp <.> "bc", rt] (linked <.> "bc")
-      doLlc (linked <.> "bc")
-      doCompile (linked <.> "o") fp
+      withSystemTempDirectory (fp ++ "-linked") $ \linked -> do
+        let rt     = runtime opts
+        doLink     [fp <.> "bc", rt] (linked <.> "bc")
+        doLlc (linked <.> "bc")
+        doCompile (linked <.> "o") fp
 
 putStrLnStdErr :: String -> IO ()
 putStrLnStdErr = hPutStrLn stderr
