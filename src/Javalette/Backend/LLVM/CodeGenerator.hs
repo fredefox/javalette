@@ -7,9 +7,8 @@ module Javalette.Backend.LLVM.CodeGenerator
   ) where
 
 import Control.Monad.Except
-import Control.Monad.State
-import Control.Monad.Writer
-import Control.Monad.Reader
+import Control.Monad.Writer (execWriterT)
+import Control.Monad.RWS
 import Data.Map (Map)
 import qualified Data.Map as M
 import qualified Control.Exception as E
@@ -79,13 +78,6 @@ instance Pretty CompilerErr where
   pPrint err = case err of
     Generic s -> text "ERR:" <+> text s
 
-type Compiler a
-  = ReaderT ReadEnv
-    ( WriterT [AlmostInstruction]
-      ( StateT Env (Except CompilerErr)
-      )
-    ) a
-
 data ReadEnv = ReadEnv
   { envConstants :: Constants
   , envFunctions :: Functions
@@ -117,10 +109,6 @@ compileProg = runExcept . compileProgM . rename
 
 compileProgM :: MonadError CompilerErr m => Jlt.Prog -> m LLVM.Prog
 compileProgM (Jlt.Program defs) = do
-  let cs        = constantsMap $ concatMap collectStringsTopDef defs
-      declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
-      defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
-      re        = ReadEnv cs (M.fromList (declTypes ++ defTypes))
   pDefs <- mapM (trTopDef re) defs
   return LLVM.Prog
     { LLVM.pGlobals = map declString (M.toList cs)
@@ -128,6 +116,10 @@ compileProgM (Jlt.Program defs) = do
     , LLVM.pDefs    = pDefs
     }
   where
+    cs        = constantsMap $ concatMap collectStringsTopDef defs
+    declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
+    defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
+    re        = ReadEnv cs (M.fromList (declTypes ++ defTypes))
     constantsMap :: [String] -> Constants
     constantsMap xs = M.fromList . map (fmap intToReg) $ zip xs [0..]
     intToReg :: Int -> LLVM.Name
@@ -198,7 +190,7 @@ trTopDef
   :: MonadError CompilerErr m
   => ReadEnv -> Jlt.TopDef -> m LLVM.Def
 trTopDef re (Jlt.FnDef t i args blk) = do
-  bss <- run $ do
+  (_, _, bss) <- (\act -> runRWST act re emptyEnv) $ do
     entry <- newLabel
     fallThrough <- newLabel
     emitLabel entry
@@ -211,8 +203,6 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     , LLVM.defArgs = map trArg args
     , LLVM.defBlks = almostToBlks bss
     }
-  where
-    run = (`evalStateT` emptyEnv) . execWriterT . (`runReaderT` re)
 
 trArg :: Jlt.Arg -> LLVM.Arg
 trArg (Jlt.Argument t i) = LLVM.Arg (trType t) (trNameToRegArg i)
