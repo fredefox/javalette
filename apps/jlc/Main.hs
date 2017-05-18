@@ -7,6 +7,7 @@ import System.Exit
 import System.FilePath
 import Options.Applicative
 import Data.Semigroup ((<>))
+import Control.Exception
 
 import Javalette.Syntax
 import qualified Javalette.Parser as Parser
@@ -15,27 +16,14 @@ import qualified Javalette.Interpreter as Interpreter
 import Javalette.TypeChecking ( TypeCheck , TypeCheckingError )
 import Javalette.PrettyPrint hiding ((<>))
 import qualified Javalette.Compiler as Compiler
-  ( execAllBackends
+  ( runBackends
   )
 import qualified Javalette.Options as StdOpts
 import qualified Javalette.Backend.LLVM as LLVM
 
 -- | Runs the compiler on all files given as arguments.
 main :: IO ()
-main = do
-  -- HACK
-  inp <- execParser LLVM.optParser
-  mapM_ compile (StdOpts.argsFilePaths inp)
-
-handleErrors :: Pretty err => Either err t -> IO t
-handleErrors errOrT = case errOrT of
-    Left err  -> do
-      putStrLnErr "ERROR"
-      prettyPrint err
-      exitFailure
-    Right t -> do
-      putStrLnErr "OK"
-      return t
+main = compile
 
 -- | Either a parse error or a typechecking error.
 data CompilerErr = ParseErr String | TypeErr TypeCheckingError deriving (Show)
@@ -46,19 +34,27 @@ instance Pretty CompilerErr where
     TypeErr err'  -> text "TYPE ERROR:" <+> pPrint err'
 
 -- | Parses and typechecks a program.
-compile :: FilePath -> IO ()
-compile fp = do
-  s <- readFile fp
-  pAnnt <- handleErrors $ parseProgram s >>= typecheck
-  Compiler.execAllBackends (dropExtension fp) pAnnt
+compile :: IO ()
+compile = Compiler.runBackends $ \x -> handleErrs (parseProgram >=> typecheck $ x)
+
+-- | Errors/success should be reported by printing to stderr.
+handleErrs :: IO a -> IO a
+handleErrs act = act <* ok `catch` \e -> bad >> throw (e :: SomeException)
+  where
+    ok = putStrLnErr "OK"
+    bad = putStrLnErr "ERR"
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
-typecheck :: Prog -> Either CompilerErr Prog
-typecheck = inLeft TypeErr . TypeChecking.typecheck
+typecheck :: Prog -> IO Prog
+typecheck = liftEither . TypeChecking.typecheck
 
 -- | Wraps the error returned by `Parser.parse`.
-parseProgram :: String -> Either CompilerErr Prog
-parseProgram = inLeft ParseErr . Parser.parse
+parseProgram :: String -> IO Prog
+parseProgram = liftEither . Parser.parse
+
+liftEither :: Exception e => Either e a -> IO a
+liftEither (Left err) = putStrLnErr "ERROR" >> throwIO err
+liftEither (Right a)  = return a
 
 -- | Prints to stderr.
 putStrLnErr :: String -> IO ()

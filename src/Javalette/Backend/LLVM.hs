@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Javalette.Backend.LLVM
@@ -12,9 +13,10 @@ import System.IO.Temp
 import System.Process
 import Options.Applicative
 import Data.Semigroup
-import Control.Monad
 
-import Javalette.Backend.Internals
+import Javalette.Backend ( Backend )
+import qualified Javalette.Backend           as Backend
+import qualified Javalette.Backend.Internals as Internal
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint hiding ((<>))
@@ -22,20 +24,20 @@ import Javalette.Backend.LLVM.CodeGenerator
   ( compileProg
   , CompilerErr
   )
-import qualified Javalette.Options as StdOpts
 
 backend :: Backend
-backend = Backend
-  { runBackend = compile
-  , backendOptions = optParser
+backend = Backend.backend Internal.Backend
+  { Internal.runBackend = compile
+  , Internal.backendOptions = optParser
+  , Internal.enable = long "llvm"
   }
 
 data LLVMOpts = LLVMOpts
   { runtime :: FilePath
   }
 
-optParser :: ParserInfo (StdOpts.Args LLVMOpts)
-optParser = StdOpts.parseArgsAdditional $ LLVMOpts
+optParser :: Parser LLVMOpts
+optParser = LLVMOpts
   <$> strOption
     (  long "runtime"
     <> short 'r'
@@ -44,21 +46,14 @@ optParser = StdOpts.parseArgsAdditional $ LLVMOpts
     <> value "lib/runtime.bc"
     )
 
--- I don't know how combine the parser defined by a backend with the main
--- parser. See [Agda.Compiler.Backend.parseBackendOptions] for inspiration.
---
--- [Agda.Compiler.Backend.parseBackendOptions]:
---   https://github.com/agda/agda/blob/master/src/full/Agda/Compiler/Backend.hs#L119
 compile :: LLVMOpts -> FilePath -> Jlt.Prog -> IO ()
-compile opts = compile' opts
-
-compile' :: LLVMOpts -> FilePath -> Jlt.Prog -> IO ()
-compile' opts fp = ioStuff . compileProg
+compile opts jltFp = ioStuff . compileProg
   where
     ioStuff :: Either CompilerErr LLVM.Prog -> IO ()
     ioStuff (Left e)  = putStrLnStdErr . prettyShow $ e
     ioStuff (Right p) = do
-      let assembly = prettyShow p
+      let fp       = dropExtension jltFp
+          assembly = prettyShow p
       putStrLn assembly
       writeFile  (fp <.> "ll") assembly
       doAssemble (fp <.> "ll")

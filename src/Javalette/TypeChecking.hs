@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {- | Typechecking of the Javalette programming language -}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
@@ -19,6 +20,7 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Control.Monad.Except
 import Control.Monad.State
+import Control.Exception
 
 import Javalette.Syntax
 import qualified Javalette.Syntax as AST
@@ -43,6 +45,9 @@ data TypeCheckingError
   | Undef
   | GenericError String
   deriving (Show)
+
+instance Exception TypeCheckingError where
+  displayException = prettyShow
 
 instance Pretty TypeCheckingError where
   pPrint err = case err of
