@@ -29,7 +29,7 @@ argparse :: Parser a -> IO a
 argparse = execParser . (`info` StdOpts.programInfo) . (<**> helper)
 
 stdopts :: Box Parser a -> IO (StdOpts.StdArgs, a)
-stdopts = unboxWith argparse . both (embed StdOpts.argsParser)
+stdopts = unboxWith argparse . both (entrench StdOpts.argsParser)
 
 runBackend :: Backend -> (String -> IO Prog) -> IO ()
 runBackend b parse = do

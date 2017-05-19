@@ -7,22 +7,38 @@ module Javalette.Utils.Box
   , unbox
   , unboxWith
   , both
-  , embed
-  , projection
+  , entrench
+  , project
   , swap
+  -- , alternative
   , Transfer(..)
   ) where
 
+import Control.Monad
+
 data Box m b = forall a . Box (m a) (a -> b)
+
+instance Functor (Box m) where
+  f `fmap` Box m p = Box m (f . p)
+
+instance Applicative m => Applicative (Box m) where
+  pure x = Box (pure x) id
+  Box m0 a0 <*> Box m1 a1 = Box ((,) <$> m0 <*> m1) $ \(a0', a1') -> a0 a0' (a1 a1')
+
+instance Monad m => Monad (Box m) where
+  return = pure
+  Box m0 a0 >>= f = Box m id
+    where
+      m = join $ fmap (project . f . a0) m0
 
 box :: m a -> (a -> b) -> Box m b
 box = Box
 
-embed :: m a -> Box m a
-embed act = Box act id
+entrench :: m a -> Box m a
+entrench act = Box act id
 
-projection :: Functor m => Box m b -> m b
-projection (Box a p) = p <$> a
+project :: Functor m => Box m b -> m b
+project (Box a p) = p <$> a
 
 swap :: (forall a . m a -> n a) -> Box m t -> Box n t
 swap f (Box m t) = Box (f m) t
