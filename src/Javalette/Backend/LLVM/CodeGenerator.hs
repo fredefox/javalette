@@ -17,10 +17,11 @@ import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
 import Javalette.Backend.LLVM.Renamer (rename)
-import Javalette.TypeChecking (LValue(..), lvalue, unlvalue)
+import Javalette.TypeChecking (LValue(..), lvalue)
 
 import Javalette.Debug
 
+-- | A compiler error.
 data CompilerErr = Generic String | Impossible String | TypeError String
 
 instance Show CompilerErr where
@@ -31,6 +32,7 @@ instance Show CompilerErr where
 
 instance E.Exception CompilerErr where
 
+-- | The environment carries around information for generating unique labels.
 data Env = Env
   -- Each time a variable is encountered it is mapped to the next number in a
   -- sequence.
@@ -38,32 +40,35 @@ data Env = Env
   , counterRegs   :: Int
   } deriving (Show)
 
+-- | Increments and returns the value of of the counter for labels.
 incrCounterLabels :: MonadState Env m => m Int
 incrCounterLabels = do
   lbl <- gets counterLabels
   modify (\e -> e { counterLabels = succ lbl })
   return lbl
 
+-- | Increments and returns the value of of the counter for registers.
 incrCounterRegs :: MonadState Env m => m Int
 incrCounterRegs = do
   lbl <- gets counterRegs
   modify (\e -> e { counterRegs = succ lbl })
   return lbl
 
+-- | Generate a unique label.
 newLabel :: MonadState Env m => m LLVM.Label
 newLabel = LLVM.Label . ('l':) . show <$> incrCounterLabels
 
+-- | Generate a unique label with a given prefix (prefix is currently disabled).
 newLabelNamed :: MonadCompile m => String -> m LLVM.Label
 -- newLabelNamed s = LLVM.Label . (s ++ ) . show <$> incrCounterLabels
 newLabelNamed _ = newLabel
 
+-- | Generate a unique register.
 newReg :: MonadCompile m => m LLVM.Name
 newReg = LLVM.Local . ('t':) . show <$> incrCounterRegs
 
--- TODO We should traverse the ast, collect all strings, put them in a map
--- and then declare them at the top of the llvm output. We should then lookup
--- the name of that declaration and use the pointer to that value whenever a
--- given string is needed.
+-- | Gets the llvm constant representing the given name or an error if no such
+-- string can be found.
 lookupString :: MonadCompile m => String -> m LLVM.Name
 lookupString s = do
   m <- asks envConstants
@@ -71,32 +76,48 @@ lookupString s = do
     Nothing -> throwError (Generic "Could not find string constant")
     Just x -> return x
 
+-- | The initial compilation environment.
 emptyEnv :: Env
 emptyEnv = Env 0 0
 
 instance Pretty CompilerErr where
-  pPrint err = case err of
-    Generic s -> text "ERR:" <+> text s
+  pPrint err = text "ERR:" <+> case err of
+    Generic s -> text s
+    Impossible s -> text s
+    TypeError s -> text s
 
+-- | Contains mappings from names to string constants and functions.
 data ReadEnv = ReadEnv
   { envConstants :: Constants
   , envFunctions :: Functions
   }
 
+-- | Maps string values to the constant declaring them.
 type Constants = Map String LLVM.Name
--- Maps functions to their argument types.
+
+-- | Maps functions to their argument types.
 type Functions = Map String [LLVM.Type]
 
+-- | Lookup a global constant representing a function.
 lookupFunction :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
 lookupFunction (LLVM.Global n) = do
   m <- asks envFunctions
   case M.lookup n m of
     Nothing -> throwError (Generic $ "Could not find function" ++ show n)
     Just f -> return f
+lookupFunction _ = error "Functions are declared globally"
 
+-- | Synonym for 'lookupFunction'.
 getArgTypes :: MonadCompile m => LLVM.Name -> m [LLVM.Type]
 getArgTypes = lookupFunction
 
+-- | The compilation context.
+--
+-- Contains effects for
+--   * Writing output
+--   * Generating unique names
+--   * Failing
+--   * Looking up globally declared constants
 type MonadCompile m =
   ( MonadWriter [AlmostInstruction] m
   , MonadState Env m
@@ -104,9 +125,14 @@ type MonadCompile m =
   , MonadReader ReadEnv m
   )
 
+-- | Translate a Javalette program to it's LLVM representation.
 compileProg :: Jlt.Prog -> Either CompilerErr LLVM.Prog
 compileProg = runExcept . compileProgM . rename
 
+-- | The translation function inside an error monad.
+--
+-- Note in particular that the RWS-effects are *not* shared across javalette
+-- top-level definitions.
 compileProgM :: MonadError CompilerErr m => Jlt.Prog -> m LLVM.Prog
 compileProgM (Jlt.Program defs) = do
   pDefs <- mapM (trTopDef re) defs
@@ -271,7 +297,7 @@ sepBy p d = synth . foldl go ((d, []), [])
 trStmt
   :: MonadCompile m
   => LLVM.Label -> Jlt.Stmt -> m ()
-trStmt fallThrough s = case s of
+trStmt fallThrough s = {-instrComment ("[STATEMENT]: " ++ prettyShow s) *> -} case s of
   Jlt.Empty -> return ()
   Jlt.BStmt b -> trBlk fallThrough b
   Jlt.Decl typ its -> mapM_ (itemInit typ) its
@@ -382,9 +408,8 @@ llvmReturn e = do
   let tp = trType (typeof e)
   emitTerminator (LLVM.Return tp op)
 
-llvmVoidReturn :: MonadCompile m => m ()
-llvmVoidReturn = emitTerminator LLVM.VoidReturn
-
+-- | Switches on the result of code-generation of an expression. Jumps to either
+-- of the two provided labels.
 cond :: MonadCompile m
   => Jlt.Expr -> LLVM.Label -> LLVM.Label -> m ()
 cond e t f = do
@@ -414,24 +439,18 @@ itemInit jltType itm = instrComment "init" >> do
     Jlt.InitObj _ cs -> do
       cts <- conTypes cs
       instrComment "nested arrays"
-      arraysInit reg cts
+      multidimArrayInit reg cts
 
-arraysInit :: MonadCompile m => LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> m ()
-arraysInit n xs@((t, o):_)= do
+-- | Initializes a multi-dimensional array.
+multidimArrayInit :: MonadCompile m => LLVM.Name -> [(LLVM.Type, LLVM.Operand)] -> m ()
+multidimArrayInit n xs@((t, _):_) = do
   emitInstruction $ LLVM.Alloca t n
   let os = map snd xs
-  void $ arrayInit' t n os
-{-
-arraysInit n xs@((t, o):_)= do
-  emitInstructions [ LLVM.Alloca t n ]
-  go n xs
-  where
-    go _ [_] = return ()
-    go n ((t, o):xs) = do
-      n' <- arrayInit' t n o
-      go n' xs
--}
+  void $ generalizedArrayInit t n os
+multidimArrayInit _ _ = error "Expecting at least one array"
 
+-- | Represent a loop in llvm. The call-back is handed an iterator and writes
+-- the loop-body.
 llvmLoop :: MonadCompile m => LLVM.Operand -> (LLVM.Operand -> m a) -> m ()
 llvmLoop len act = do
   counter <- newCounter
@@ -461,14 +480,14 @@ incrCounter n = do
   instrStore i32 (Left r1) n
   -- TODO: Think it has to be `r0` here
   -- return (Left r1)
-  return (Left r0)
+  return (Left r1)
 
 -- It should be the case that
 --
---     arrayInit tp _ = (void.) . arrayInit' tp
+--     arrayInit tp _ = (void.) . generalizedArrayInit tp
 --
-arrayInit' :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
-arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array (len:lens) = do
+generalizedArrayInit :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
+generalizedArrayInit structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array (len:lens) = do
   r0 <- newReg
   lengthOfArrayLLVM structTp array r0
   -- r1 <- newReg
@@ -484,7 +503,7 @@ arrayInit' structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array (len:lens
         nstd <- instrLoad nestedTp nstdp
         instrComment $ "now we wanna init "
             ++ prettyShow nstd ++ " which has type " ++ prettyShow (p arrayElemTp)
-        arrayInit' arrayElemTp nstd lens
+        generalizedArrayInit arrayElemTp nstd lens
       _             -> do
         instrComment $ "hit base-case: " ++ prettyShow arrayElemTp
         r2 <- instrCall i8p (LLVM.Global "calloc")
@@ -908,3 +927,7 @@ instrBitCast t0 n t1 = instrAssgn $ LLVM.BitCast t0 n t1
 
 instrComment :: MonadCompile m => String -> m ()
 instrComment = emitInstruction . LLVM.Comment
+
+-- | LLVM representation of void return.
+llvmVoidReturn :: MonadCompile m => m ()
+llvmVoidReturn = emitTerminator LLVM.VoidReturn
