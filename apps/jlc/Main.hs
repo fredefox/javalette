@@ -35,14 +35,20 @@ instance Pretty CompilerErr where
 
 -- | Parses and typechecks a program.
 compile :: IO ()
-compile = Compiler.runBackends $ \x -> handleErrs (parseProgram >=> typecheck $ x)
+compile
+  =   handleErrs
+  $   Compiler.runBackends
+  $   parseProgram
+  >=> typecheck
 
 -- | Errors/success should be reported by printing to stderr.
 handleErrs :: IO a -> IO a
-handleErrs act = act <* ok `catch` \e -> bad >> throw (e :: SomeException)
+handleErrs act = (act <* ok) `catch` handler
   where
     ok = putStrLnErr "OK"
-    bad = putStrLnErr "ERR"
+    bad = putStrLnErr "ERROR"
+    handler :: SomeException -> IO a
+    handler e = bad *> throwIO e
 
 -- | Wraps the error returned by `TypeChecking.typecheck`.
 typecheck :: Prog -> IO Prog
@@ -53,7 +59,7 @@ parseProgram :: String -> IO Prog
 parseProgram = liftEither . Parser.parse
 
 liftEither :: Exception e => Either e a -> IO a
-liftEither (Left err) = putStrLnErr "ERROR" >> throwIO err
+liftEither (Left err) = throwIO err
 liftEither (Right a)  = return a
 
 -- | Prints to stderr.

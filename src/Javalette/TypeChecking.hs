@@ -647,7 +647,7 @@ staticControlFlowCheckDef (FnDef t _ args blk) = withNewScope $ do
     Always t' -> when (t /= t')
       $ throwError $ GenericError "Inferred type doesn't match expected type"
     _         -> when (t /= AST.Void)
-      $ throwError $ GenericError "Control-flow is out of whack yo!"
+      $ throwError $ GenericError "Not all paths return a value."
 
 -- | Infers the return-type of a statement and return how "often" we see this
 -- type. The frequency with which we see the type can be seen as wether or not
