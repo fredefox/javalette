@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {- | A wrapper hiding details that only backends need to look at -}
 module Javalette.Backend
-  ( Backend
+  ( Backend()
   , backend
   , runBackend
   , runBackends
@@ -17,8 +17,10 @@ import qualified Javalette.Options as StdOpts
 
 type Compilation = FilePath -> Prog -> IO ()
 
+-- | A compiler backend.
 type Backend = Box Parser Compilation
 
+-- | Create a backend from its internal representation.
 backend :: I.Backend -> Backend
 backend (I.Backend run optsP enable) = box ((,) <$> optsP <*> switch enable)
   -- NOTE disabled because the test-runner does not pass this flag to the
@@ -31,6 +33,8 @@ argparse = execParser . (`info` StdOpts.programInfo) . (<**> helper)
 stdopts :: Box Parser a -> IO (StdOpts.StdArgs, a)
 stdopts = unboxWith argparse . both (entrench StdOpts.argsParser)
 
+-- | Run a backend. The function passed to is the function that parses a program
+-- from a string.
 runBackend :: Backend -> (String -> IO Prog) -> IO ()
 runBackend b parse = do
   (StdOpts.Args fps , cpl) <- stdopts b
@@ -39,5 +43,6 @@ runBackend b parse = do
     p <- parse s
     cpl fp p
 
+-- | Run all backends in a combined context.
 runBackends :: [Backend] -> (FilePath -> IO Prog) -> IO ()
 runBackends bs = runBackend (mconcat bs)

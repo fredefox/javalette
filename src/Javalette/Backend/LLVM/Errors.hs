@@ -1,3 +1,4 @@
+{- | Various runtime errors -}
 module Javalette.Backend.LLVM.Errors
   ( CompilerErr(..)
   , impossible
@@ -25,16 +26,18 @@ instance Pretty CompilerErr where
     Impossible s -> text s
     TypeError s -> text s
 
--- Various runtime errors
-
+-- | Something that can never happen.
 {-# INLINE impossible #-}
 impossible :: String -> a
 impossible = E.throw . Impossible
 
+-- | A type-error
 {-# INLINE typeerror #-}
 typeerror :: String -> a
 typeerror = E.throw . TypeError
 
+-- | Errors that cannot happen because they have been desugared by the
+-- type-checker.
 {-# INLINE impossibleRemoved #-}
 impossibleRemoved :: a
 impossibleRemoved = typeerror "removed by typechecker"

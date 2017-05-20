@@ -331,14 +331,18 @@ desugarFor t0 i e s0 = do
         ]
         ))
 
+-- | An expression representing an lvalue. Lvalues are either identifiers or
+-- array-index expressions.
 data LValue = LValue Ident [Index]
 
+-- | Convert an expression to an lvalue.
 lvalueErr :: Expr -> TypeChecker LValue
 lvalueErr e = case e of
   EVar i -> return (LValue i [])
   EIndex e' idx -> addIndex idx <$> lvalueErr e'
   _ -> throwError $ GenericError "Not an l-value"
 
+-- | Non-total version of 'lvalueErr'.
 lvalue :: Expr -> LValue
 lvalue e = case e of
   EVar i -> LValue i []
