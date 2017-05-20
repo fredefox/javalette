@@ -11,26 +11,16 @@ import Control.Monad.Writer (execWriterT)
 import Control.Monad.RWS
 import Data.Map (Map)
 import qualified Data.Map as M
-import qualified Control.Exception as E
 
 import qualified Javalette.Syntax as Jlt
 import qualified Javalette.Backend.LLVM.Language as LLVM
 import Javalette.PrettyPrint
-import Javalette.Backend.LLVM.Renamer (rename)
 import Javalette.TypeChecking (LValue(..), lvalue)
+import Javalette.Backend.LLVM.Renamer (rename)
+import Javalette.Backend.LLVM.Errors
+import qualified Javalette.Backend.LLVM.StringCollector as StringCollector ( collect )
 
 import Javalette.Debug
-
--- | A compiler error.
-data CompilerErr = Generic String | Impossible String | TypeError String
-
-instance Show CompilerErr where
-  show e = case e of
-    Generic s -> "ERROR: " ++ s
-    Impossible s -> "THE IMPOSSIBLE HAPPENED: " ++ s
-    TypeError s -> "TYPE ERROR: " ++ s
-
-instance E.Exception CompilerErr where
 
 -- | The environment carries around information for generating unique labels.
 data Env = Env
@@ -79,12 +69,6 @@ lookupString s = do
 -- | The initial compilation environment.
 emptyEnv :: Env
 emptyEnv = Env 0 0
-
-instance Pretty CompilerErr where
-  pPrint err = text "ERR:" <+> case err of
-    Generic s -> text s
-    Impossible s -> text s
-    TypeError s -> text s
 
 -- | Contains mappings from names to string constants and functions.
 data ReadEnv = ReadEnv
@@ -142,7 +126,7 @@ compileProgM (Jlt.Program defs) = do
     , LLVM.pDefs    = pDefs
     }
   where
-    cs        = constantsMap $ concatMap collectStringsTopDef defs
+    cs        = constantsMap $ concatMap StringCollector.collect defs
     declTypes = map (\d -> (unname (LLVM.declName d), LLVM.declArgs d)) builtinDecls
     defTypes  = map (\d -> (unname (trTopDefName d), trArgType d)) defs
     re        = ReadEnv cs (M.fromList (declTypes ++ defTypes))
@@ -159,58 +143,6 @@ compileProgM (Jlt.Program defs) = do
     unname (LLVM.Global s) = s
     unname (LLVM.Local s) = s
 
-collectStringsTopDef :: Jlt.TopDef -> [String]
-collectStringsTopDef (Jlt.FnDef _ _ _ b) = collectStringsBlk b
-
-collectStringsBlk :: Jlt.Blk -> [String]
-collectStringsBlk (Jlt.Block stmts) = concatMap collectStringsStmt stmts
-
-collectStringsStmt :: Jlt.Stmt -> [String]
-collectStringsStmt s = case s of
-  Jlt.Empty -> []
-  Jlt.BStmt b -> collectStringsBlk b
-  Jlt.Decl _ its -> concatMap collectStringsItem its
-  Jlt.Ass _ e -> collectStringsExpr e
-  Jlt.Incr{} -> impossibleRemoved ; Jlt.Decr{} -> impossibleRemoved
-  Jlt.Ret e -> collectStringsExpr e
-  Jlt.VRet -> []
-  Jlt.Cond e s0 -> collectStringsExpr e ++ collectStringsStmt s0
-  Jlt.CondElse e s0 s1 -> concat
-    [ collectStringsExpr e
-    , collectStringsStmt s0
-    , collectStringsStmt s1
-    ]
-  Jlt.While e s0 -> collectStringsExpr e ++ collectStringsStmt s0
-  Jlt.SExp e -> collectStringsExpr e
-  Jlt.For{} -> impossibleRemoved
-
-collectStringsItem :: Jlt.Item -> [String]
-collectStringsItem i = case i of
-  Jlt.NoInit{} -> []
-  Jlt.Init _ e -> collectStringsExpr e
-  Jlt.InitObj _ c -> collectStringsCons c
-
-collectStringsCons :: Jlt.Constructor -> [String]
-collectStringsCons c = case c of
-  Jlt.ArrayCon _ e -> collectStringsExpr e
-
-collectStringsExpr :: Jlt.Expr -> [String]
-collectStringsExpr e = case e of
-  Jlt.EVar{} -> [] ; Jlt.ELitInt{} -> []; Jlt.ELitDoub{} -> []
-  Jlt.ELitTrue -> []; Jlt.ELitFalse -> []; Jlt.EApp _ es -> concatMap collectStringsExpr es
-  Jlt.EString s -> pure s; Jlt.Neg e0 -> collectStringsExpr e0
-  Jlt.Not e0 -> collectStringsExpr e0;
-  Jlt.EMul e0 _ e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
-  Jlt.EAdd e0 _ e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
-  Jlt.ERel e0 _ e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
-  Jlt.EAnd e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
-  Jlt.EOr e0 e1 -> collectStringsExpr e0 ++ collectStringsExpr e1
-  Jlt.EAnn _ e0 -> collectStringsExpr e0
-  Jlt.Dot e0 _ -> collectStringsExpr e0
-  Jlt.EIndex e0 idx -> collectStringsExpr e0 ++ collectStringsIndex idx
-
-collectStringsIndex :: Jlt.Index -> [String]
-collectStringsIndex (Jlt.Indx e) = collectStringsExpr e
 
 trTopDef
   :: MonadError CompilerErr m
@@ -294,6 +226,7 @@ sepBy p d = synth . foldl go ((d, []), [])
       else ((a, as ++ [x]), acc)
     synth (prev, acc) = acc ++ [prev]
 
+-- TODO Outputting a comment with new-lines is a no-go
 trStmt
   :: MonadCompile m
   => LLVM.Label -> Jlt.Stmt -> m ()
@@ -867,21 +800,6 @@ call t n ops = do
     -- NOTE: An unneccesarry register is allocated.
     LLVM.Void -> instrCallVoid t n tps >> newReg
     _ -> instrCall t n tps
-
--- Various runtime errors
-
-{-# INLINE impossible #-}
-impossible :: String -> a
-impossible = E.throw . Impossible
-
-{-# INLINE typeerror #-}
-typeerror :: String -> a
-typeerror = E.throw . TypeError
-
-{-# INLINE impossibleRemoved #-}
-impossibleRemoved :: a
-impossibleRemoved = typeerror "removed by typechecker"
-
 
 -- Helper methods for instructions
 

@@ -31,6 +31,8 @@ library
                        Javalette.Backend.Internals
                        Javalette.Backend.LLVM.Language
                        Javalette.Debug
+                       Javalette.Backend.LLVM.Errors
+                       Javalette.Backend.LLVM.StringCollector
   exposed-modules:     Javalette.Syntax
                        Javalette.Interpreter
                        Javalette.Interpreter.Program
