@@ -143,7 +143,8 @@ compileProgM (Jlt.Program defs) = do
     unname (LLVM.Global s) = s
     unname (LLVM.Local s) = s
 
-
+-- | Translates a javalette function definition to an llvm function definitions
+-- inside the error monad.
 trTopDef
   :: MonadError CompilerErr m
   => ReadEnv -> Jlt.TopDef -> m LLVM.Def
@@ -162,32 +163,51 @@ trTopDef re (Jlt.FnDef t i args blk) = do
     , LLVM.defBlks = almostToBlks bss
     }
 
+-- | A simple mapping between a javalette argument and an llvm argument.
 trArg :: Jlt.Arg -> LLVM.Arg
 trArg (Jlt.Argument t i) = LLVM.Arg (trType t) (trNameToRegArg i)
 
+-- | Code generation for an argument. Allocates memory and initializes the variable.
 cgArg :: MonadCompile m => Jlt.Arg -> m ()
 cgArg (Jlt.Argument t i) = varInit (trType t) (trNameToReg i) (Left (trNameToRegArg i))
 
+-- | Translates a block.
 trBlk
   :: MonadCompile m
   => LLVM.Label -> Jlt.Blk -> m ()
 trBlk fallthrough (Jlt.Block stmts) = mapM_ (trStmt fallthrough) stmts
 
+-- | `AlmostInstruction` is a simple sum-type of llvm- labels, instructions and
+-- terminator instruction. These are easier to work with when doing
+-- code-generation. They are then translated to actual llvm-blocks in
+-- 'almostToBlks'. The name could perhaps have been better.
 data AlmostInstruction
   = Label LLVM.Label
   | Instr LLVM.Instruction
   | TermInstr LLVM.TermInstr
   deriving (Show)
 
+-- | Is it a label?
 isLabel :: AlmostInstruction -> Bool
 isLabel a = case a of Label{} -> True ; _ -> False
 
+-- | Is it a terminator instruction?
 isTermInstr :: AlmostInstruction -> Bool
 isTermInstr a = case a of TermInstr{} -> True ; _ -> False
 
+-- | Unwraps a terminator instruction.
 unTermInstr :: AlmostInstruction -> LLVM.TermInstr
 unTermInstr a = case a of TermInstr i -> i ; _ -> undefined
 
+-- | The code-generator works with 'AlmostInstruction' for simplicity. These are
+-- then mapped to llvm-blocks in this function. This function ensures that the
+-- instructions are actually semantically correct according to llvm. In some
+-- cases it will try to fixup the input. Like if the block it was just about to
+-- assembly didn't end in a terminator instruction, then it will insert a
+-- `unreachable`. This is, however, probably not what you want.
+--
+-- The implementation may look daunting, but it basically just stitches the flat
+-- `[AlmostInstruction]` structure together into `[LLVM.Blk]`.
 almostToBlks :: [AlmostInstruction] -> [LLVM.Blk]
 almostToBlks = map (uncurry4 LLVM.Blk . combineLabels) . sepLbls
   where
@@ -214,9 +234,17 @@ almostToBlks = map (uncurry4 LLVM.Blk . combineLabels) . sepLbls
         head' [] = TermInstr LLVM.Unreachable
         head' (x:_) = x
 
+-- | Use for yuuuuge profit!
 uncurry4 :: (g -> r -> e -> a -> t) -> (g, r, e, a) -> t
 uncurry4 g (r, e, a, t) = g r e a t
 
+-- | @'sepBy' p i xs@ groups together all subsequent elements 'xs' from some
+-- element 'x' that match the predicate 'p'. 'i' is the element in the first
+-- group. An example is perhaps in order:
+--
+--     sepBy (== 2) 222 . take 10 . cycle $ [0..3]
+--       = [(222,[0,1]),(2,[3,0,1]),(2,[3,0,1])]
+--
 sepBy :: (a -> Bool) -> a -> [a] -> [(a, [a])]
 sepBy p d = synth . foldl go ((d, []), [])
   where
@@ -227,6 +255,7 @@ sepBy p d = synth . foldl go ((d, []), [])
     synth (prev, acc) = acc ++ [prev]
 
 -- TODO Outputting a comment with new-lines is a no-go
+-- | Writes instructions for a statement.
 trStmt
   :: MonadCompile m
   => LLVM.Label -> Jlt.Stmt -> m ()
@@ -273,20 +302,7 @@ trStmt fallThrough s = {-instrComment ("[STATEMENT]: " ++ prettyShow s) *> -} ca
   where
     cont = trStmt fallThrough
 
-jumpTo :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
-jumpTo lbl = emitTerminator (LLVM.Branch lbl)
-
-jumpToNew :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
-jumpToNew lbl = do
-  emitTerminator (LLVM.Branch lbl)
-  emitLabel lbl
-
-emitLabel :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
-emitLabel = tell . pure . Label
-
-emitTerminator :: MonadWriter [AlmostInstruction] m => LLVM.TermInstr -> m ()
-emitTerminator = tell . pure . TermInstr
-
+-- | Code-generation for a javalette assignment statement.
 assign :: MonadCompile m
   => Jlt.Expr -> Jlt.Expr -> m ()
 assign lv e = instrComment "assign" >> case lvalue lv of
@@ -308,31 +324,38 @@ assign lv e = instrComment "assign" >> case lvalue lv of
           :: MonadCompile m
           => LLVM.Name -> [((LLVM.Type, LLVM.Operand), LLVM.Type)] -> m LLVM.Name
         loadArrayPointer reg [] = return reg
-        loadArrayPointer reg ((idx, tpStructLLVM@(LLVM.Struct (_:LLVM.Pointer tpElems:_))):idxs) = do
+        loadArrayPointer reg
+          ((idx, tpStructLLVM@(LLVM.Struct (_:LLVM.Pointer tpElems:_))):idxs')= do
           let p = LLVM.Pointer
           r0 <- instrGep tpStructLLVM reg
               [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 1)]
           r1 <- instrLoad (p tpElems) r0
           r2 <- instrGep tpElems r1 [idx]
-          loadArrayPointer r2 idxs
+          loadArrayPointer r2 idxs'
+        loadArrayPointer _ _ = error "Not the llvm representation of a javalette array"
     idxsLLVM <- mapM typeValueOfIndex idxs
---          . iterateN (length idxsLLVM) Jlt.Array
     ptr <- loadArrayPointer (trNameToReg i) (zip idxsLLVM nestedArrayTypes)
     instrStore tpElemsLLVM op ptr
 
+-- | Int to llvm operand.
 intOp :: Int -> LLVM.Operand
 intOp = Right . LLVM.ValInt
 
--- Surely the type of the index will always be an integer.
+-- XXX Surely the type of the index will always be an integer.
+-- | The type and value of a javalette index-value.
 typeValueOfIndex :: MonadCompile m => Jlt.Index -> m (LLVM.Type, LLVM.Operand)
 typeValueOfIndex (Jlt.Indx e) = do
   r <- resultOfExpression e
   return (trType $ typeof e, r)
 
+-- | The type of an (annotated) javalette expression. If the expression is not
+-- annotated, then that is an error (presumably caused by the typechecker that
+-- does this sort of stuff).
 typeof :: Jlt.Expr -> Jlt.Type
 typeof (Jlt.EAnn tp _) = tp
 typeof _ = typeerror "All expressions should've been annotated by the type-checker."
 
+-- | Code-generation for a return-statement.
 llvmReturn
   :: MonadCompile m
   => Jlt.Expr -> m ()
@@ -397,6 +420,7 @@ llvmLoop len act = do
   emitTerminator $ LLVM.BranchCond (Left r0) start stop
   emitLabel stop
 
+-- | Initializes a new counter in llvm and returns it's name.
 newCounter :: MonadCompile m => m LLVM.Name
 newCounter = do
   let i32 = LLVM.I 32
@@ -419,6 +443,7 @@ incrCounter n = do
 --
 --     arrayInit tp _ = (void.) . generalizedArrayInit tp
 --
+-- | A generalized version of 'arrayInit' for multi-dimensional arrays.
 generalizedArrayInit :: MonadCompile m => LLVM.Type -> LLVM.Name -> [LLVM.Operand] -> m ()
 generalizedArrayInit structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array (len:lens) = do
   r0 <- newReg
@@ -451,6 +476,7 @@ generalizedArrayInit structTp@(LLVM.Struct (_:LLVM.Pointer arrayElemTp:_)) array
     i8   = LLVM.I 8
     p    = LLVM.Pointer
     i8p  = p i8
+generalizedArrayInit _ _ _ = error "LLVM-type does not represent an array"
 
 -- | Returns the list of structs representing arrays that must be initialized
 -- along with its length.
@@ -462,7 +488,9 @@ conTypes c = case c of
           Jlt.TypeCon t -> return [(trType t, len)]
           _             -> conTypes c'
       return $ (arrayLLVM tp,len):tps
+  _ -> error "Not a constructor"
 
+-- | The type of elements in an array.
 typeOfElements :: Jlt.Type -> LLVM.Type
 typeOfElements t = case t of
   Jlt.Array t' -> trType t'
@@ -477,6 +505,7 @@ typeOfElements t = case t of
 --     struct { const int length ; t value[n] ; }
 --
 -- Where `t` is the type of the array and `n` is the length.
+-- | Code-generation for a one-dimensional array.
 arrayInit :: MonadCompile m => LLVM.Type -> LLVM.Type -> LLVM.Name -> LLVM.Operand -> m ()
 arrayInit structTp arrayElemTp array len = do
   r0 <- newReg
@@ -497,12 +526,14 @@ arrayInit structTp arrayElemTp array len = do
       LLVM.Double -> 8
     sndStructLLVM (LLVM.Struct (_:x:_)) = x
 
+-- | Code generation for accessing the lenght of an array.
 lengthOfArrayLLVM :: MonadCompile m
   => LLVM.Type -> LLVM.Name -> LLVM.Name -> m ()
 lengthOfArrayLLVM t n0 n1 =
   emitInstruction $ LLVM.GetElementPtr t (LLVM.Pointer t) n0
     [(LLVM.I 32, intOp 0), (LLVM.I 32, intOp 0)] n1
 
+-- | Code-generation for initializing a variable with the given primitive type.
 varInit
   :: MonadCompile m
   => LLVM.Type -> LLVM.Name -> LLVM.Operand -> m ()
@@ -511,33 +542,43 @@ varInit tp reg op = emitInstructions
   , LLVM.Store tp op (LLVM.Pointer tp) reg
   ]
 
+-- | Map javalette names (that are all unique thanks to meddling type-checker)
+-- to llvm names.
 trIdent :: Jlt.Ident -> LLVM.Name
 trIdent (Jlt.Ident s) = LLVM.Local s
 
+-- | The default value of a javalette type.
 defaultValue :: Jlt.Type -> LLVM.Operand
 defaultValue t = case t of
   Jlt.Int -> Right (LLVM.ValInt 0)
   Jlt.Doub -> Right (LLVM.ValDoub 0)
   _   -> impossible "Can only initialize ints and doubles"
 
+-- | The name of an item.
 itemName :: Jlt.Item -> Jlt.Ident
 itemName itm = case itm of
   Jlt.NoInit i -> i
   Jlt.Init i _  -> i
   Jlt.InitObj i _ -> i
 
+-- | Map a javalette identifier to an llvm global constant.
 trName :: Jlt.Ident -> LLVM.Name
 trName (Jlt.Ident s) = LLVM.Global s
 
+-- | Map a javalette identifier to an llvm local identifier.
 trNameToReg :: Jlt.Ident -> LLVM.Name
 trNameToReg (Jlt.Ident s) = LLVM.Local s
 
+-- | Map a javalette identifier to an llvm local identifier with a suffix. Used
+-- for initializing arguments.
 trNameToRegArg :: Jlt.Ident -> LLVM.Name
 trNameToRegArg (Jlt.Ident s) = LLVM.Local (s ++ ".val")
 
+-- | The type of a javalette argument.
 argType :: Jlt.Arg -> LLVM.Type
 argType (Jlt.Argument t _) = trType t
 
+-- | Map javalette types to llvm-types.
 trType :: Jlt.Type -> LLVM.Type
 trType t = case t of
   Jlt.Int -> LLVM.I 32
@@ -548,8 +589,9 @@ trType t = case t of
     $  "The string type cannot be translated directly. "
     ++ "Strings of different length have different types"
   Jlt.Fun _t _tArgs -> undefined
-  Jlt.Array t0 -> arrayLLVM (trType t0) 
+  Jlt.Array t0 -> arrayLLVM (trType t0)
 
+-- | All the built-in functions.
 builtinDecls :: [LLVM.Decl]
 builtinDecls =
   [ LLVM.Decl
@@ -594,6 +636,7 @@ elemTpLLVM :: LLVM.Type -> LLVM.Type
 elemTpLLVM (LLVM.Struct [_, t]) = t
 elemTpLLVM _ = undefined
 
+-- | Code generation for an expression with the given type.
 resultOfExpressionTp
   :: MonadCompile m
   => Jlt.Type -> Jlt.Expr -> m LLVM.Operand
@@ -699,6 +742,7 @@ resultOfExpressionTp tp e = case e of
     r1 <- instrLoad tp' r0
     return (Left r1)
 
+-- | A safe version of last that also gives you the other elements.
 splitLast :: [t] -> Maybe ([t], t)
 splitLast [] = Nothing
 splitLast [x] = Just ([], x)
@@ -706,7 +750,10 @@ splitLast (x:xs) = do
   (xs', l) <- splitLast xs
   return (x:xs', l)
 
--- This is sort of a hack.
+-- | Used for accessing an element in an array rather than loading the whole
+-- array.
+--
+-- Admittedly this is sort of a hack.
 lastLoadToGep :: MonadCompile m
   => (LLVM.Type -> LLVM.Type)
   -> [(LLVM.Type, LLVM.Operand)]
@@ -724,6 +771,7 @@ lastLoadToGep f ops is = do
       return (tp, r)
     _ -> error "Last instruction was not load :("
 
+-- | The zero value of the given javalette type in llvm.
 zero :: LLVM.Type -> LLVM.Operand
 zero t = case t of
   LLVM.I{} -> Right (LLVM.ValInt 0)
@@ -732,9 +780,12 @@ zero t = case t of
 
 -- The plus one is because we always append "\00" to the string we output which
 -- is actually one character.
+-- | The type of a string. Types of varying lengths have different types - hence
+-- they depend on their value.
 stringType :: String -> LLVM.Type
 stringType s = LLVM.Array (length s + 1) (LLVM.I 8)
 
+-- | Map a javalette (mult) operator into an llvm operator.
 mulOp
   :: Jlt.MulOp
      -> LLVM.Type
@@ -750,6 +801,7 @@ mulOp op tp = case tp of
     Jlt.Mod   -> typeerror "Can't take modulo of double values"
   _ -> typeerror "No mul-op for this type"
 
+-- | Map a javalette (rel) operator into an llvm operator.
 relOp
   :: Jlt.RelOp
   -> LLVM.Type
@@ -771,6 +823,7 @@ relOp op tp = case tp of
     Jlt.NE  -> LLVM.ONE
   _ ->  typeerror "No rel-op for this type"
 
+-- | Map a javalette (add) operator into an llvm operator.
 addOp
   :: Jlt.AddOp
      -> LLVM.Type
@@ -784,6 +837,8 @@ addOp op tp = case tp of
     Jlt.Minus -> LLVM.FSub
   _ -> typeerror "No add-op for this type"
 
+-- | Code generation for annotated expressions. Calling this on a non-annotated
+-- expression is an error.
 resultOfExpression :: MonadCompile m
   => Jlt.Expr -> m LLVM.Operand
 resultOfExpression e = case e of
@@ -801,51 +856,120 @@ call t n ops = do
     LLVM.Void -> instrCallVoid t n tps >> newReg
     _ -> instrCall t n tps
 
--- Helper methods for instructions
+-- * Helper methods emitting llvm-instructions
 
+-- | Emit a instructions
 emitInstructions :: MonadWriter [AlmostInstruction]  m => [LLVM.Instruction] -> m ()
 emitInstructions = tell . map Instr
 
+-- | Emit an instruction
 emitInstruction :: MonadWriter [AlmostInstruction] m => LLVM.Instruction -> m ()
 emitInstruction = emitInstructions . pure
 
+-- | Emit a label
+emitLabel :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+emitLabel = tell . pure . Label
+
+-- | Emit a terminator instruction
+emitTerminator :: MonadWriter [AlmostInstruction] m => LLVM.TermInstr -> m ()
+emitTerminator = tell . pure . TermInstr
+
+-- | Emit an assignment instruction
 instrAssgn :: MonadCompile m => (LLVM.Name -> LLVM.Instruction) -> m LLVM.Name
 instrAssgn f = do
   r <- newReg
   emitInstruction . f $ r
   return r
 
+-- | Emit a binary operation instruction
 instrBinOp :: MonadCompile m => LLVM.Op -> LLVM.Type -> LLVM.Operand -> LLVM.Operand -> m LLVM.Name
 instrBinOp binOp tp op0 op1 = instrAssgn $ LLVM.BinOp binOp tp op0 op1
 
+-- | Emit `alloca`
 instrAlloca
   :: MonadCompile m
   => LLVM.Type -> m LLVM.Name
 instrAlloca tp = instrAssgn $ LLVM.Alloca tp
 
+-- | Emit `load`
 instrLoad
   :: MonadCompile m
   => LLVM.Type
   -> LLVM.Name -> m LLVM.Name
 instrLoad t0 n = instrAssgn $ LLVM.Load t0 (LLVM.Pointer t0) n
 
+-- | Emit `getelementptr`
+instrGep :: MonadCompile m
+     => LLVM.Type
+     -> LLVM.Name
+     -> [(LLVM.Type, LLVM.Operand)]
+     -> m LLVM.Name
 instrGep t0 n ops = instrAssgn $ LLVM.GetElementPtr t0 (LLVM.Pointer t0) n ops
 
+-- | Emit `store`
+instrStore :: MonadCompile m
+     => LLVM.Type
+     -> LLVM.Operand
+     -> LLVM.Name
+     -> m ()
 instrStore t0 op n = emitInstruction $ LLVM.Store t0 op (LLVM.Pointer t0) n
 
+-- | Emit `icmp`
+instrIcmp :: MonadCompile m
+     => LLVM.Comparison
+     -> LLVM.Type
+     -> LLVM.Operand
+     -> LLVM.Operand
+     -> m LLVM.Name
 instrIcmp c t op0 op1 = instrAssgn $ LLVM.Icmp c t op0 op1
 
+-- | Emit `fcmp`
+instrFcmp :: MonadCompile m
+     => LLVM.Comparison
+     -> LLVM.Type
+     -> LLVM.Operand
+     -> LLVM.Operand
+     -> m LLVM.Name
 instrFcmp c t op0 op1 = instrAssgn $ LLVM.Fcmp c t op0 op1
 
+-- | Emit `call`
+instrCall :: MonadCompile m
+     => LLVM.Type
+     -> LLVM.Name
+     -> [(LLVM.Type, LLVM.Operand)]
+     -> m LLVM.Name
 instrCall t n ops = instrAssgn $ LLVM.Call t n ops
 
+-- | Emit `call` with no return value
+instrCallVoid :: MonadCompile m
+     => LLVM.Type
+     -> LLVM.Name
+     -> [(LLVM.Type, LLVM.Operand)]
+     -> m ()
 instrCallVoid t n ops = emitInstruction $ LLVM.CallVoid t n ops
 
+-- | Emit `bitcast`
+instrBitCast :: MonadCompile m
+     => LLVM.Type
+     -> LLVM.Name
+     -> LLVM.Type
+     -> m LLVM.Name
 instrBitCast t0 n t1 = instrAssgn $ LLVM.BitCast t0 n t1
 
+-- | Emit a comment
 instrComment :: MonadCompile m => String -> m ()
 instrComment = emitInstruction . LLVM.Comment
 
 -- | LLVM representation of void return.
 llvmVoidReturn :: MonadCompile m => m ()
 llvmVoidReturn = emitTerminator LLVM.VoidReturn
+
+-- | @'jumpTo' lbl@ unconditional jump to @lbl@.
+jumpTo :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+jumpTo lbl = emitTerminator (LLVM.Branch lbl)
+
+-- | Create a new block and jump to it.
+jumpToNew :: MonadWriter [AlmostInstruction] m => LLVM.Label -> m ()
+jumpToNew lbl = do
+  emitTerminator (LLVM.Branch lbl)
+  emitLabel lbl
