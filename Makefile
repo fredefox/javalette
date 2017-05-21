@@ -29,7 +29,11 @@ test:   build
 	make -C test test
 
 checkdist: dist
-	test/Grade $(TARBALL) -t test/testsuite
+	test/Grade -g-no-pie -bLLVM $(TARBALL) \
+		-t test/testsuite \
+        -x arrays1 \
+        -x arrays2
+
 
 # Note, requires hlint post (fa0a76a412) as of this writing it haven't
 # been merged into the official repo.
