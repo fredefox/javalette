@@ -1,15 +1,14 @@
 module Javalette.Compiler
-  ( execAllBackends
+  ( runBackends
   ) where
 
 import Javalette.Syntax as AST
-import Javalette.Backend
+import Javalette.Backend ( Backend )
+import qualified Javalette.Backend as Backend
 import qualified Javalette.Backend.LLVM as LLVM
 
-execAllBackends :: FilePath -> AST.Prog -> IO ()
-execAllBackends fp p = mapM_ run backends
-  where
-    run b = runBackend b fp p
+runBackends :: (FilePath -> IO AST.Prog) -> IO ()
+runBackends = Backend.runBackends backends
 
 backends :: [Backend]
 backends = [ LLVM.backend ]

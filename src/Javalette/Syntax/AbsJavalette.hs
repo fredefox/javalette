@@ -24,7 +24,7 @@ data Stmt
     = Empty
     | BStmt Blk
     | Decl Type [Item]
-    | Ass LValue Expr
+    | Ass Expr Expr
     | Incr Ident
     | Decr Ident
     | Ret Expr
@@ -40,10 +40,7 @@ data Item
     = NoInit Ident | Init Ident Expr | InitObj Ident Constructor
   deriving (Eq, Ord, Show, Read)
 
-data Constructor = ArrayCon Type Expr
-  deriving (Eq, Ord, Show, Read)
-
-data LValue = LIdent Ident | LIndexed Ident Index
+data Constructor = TypeCon Type | ArrayCon Constructor Expr
   deriving (Eq, Ord, Show, Read)
 
 data Index = Indx Expr

@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds #-}
+{- | The internal representation of the llvm syntax -}
 module Javalette.Backend.LLVM.Language
   (
   -- * Syntax
@@ -16,7 +17,6 @@ module Javalette.Backend.LLVM.Language
   , TermInstr(..)
   , Instruction(..)
   , Comparison(..)
---  , Reg(..)
   , Operand
   , Val(..)
   , Op(..)

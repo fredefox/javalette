@@ -1,5 +1,5 @@
 name:                javalette
-version:             0.4.0.0
+version:             0.5.0.0
 synopsis:            A compiler for Javalette
 description:         The documentation is avaiable here:
                      <http://www.cse.chalmers.se/edu/course/TDA283/project/>.
@@ -31,6 +31,8 @@ library
                        Javalette.Backend.Internals
                        Javalette.Backend.LLVM.Language
                        Javalette.Debug
+                       Javalette.Backend.LLVM.Errors
+                       Javalette.Backend.LLVM.StringCollector
   exposed-modules:     Javalette.Syntax
                        Javalette.Interpreter
                        Javalette.Interpreter.Program
@@ -39,6 +41,7 @@ library
                        Javalette.Parser.Main
                        Javalette.PrettyPrint
                        Javalette.Compiler
+                       Javalette.Options
                        Javalette.Backend
                        Javalette.Backend.LLVM
                        Javalette.Backend.LLVM.CodeGenerator
@@ -49,13 +52,15 @@ library
                      , filepath >= 1.4.1.1
                      , free >= 4.12.0
                      , mtl >= 2.2.1
+                     , optparse-applicative >= 0.13.2.0
                      , pretty >= 1.1.3.3
                      , process >= 1.4.3.0
-                     , optparse-applicative >= 0.13.2.0
+                     , temporary >= 1.2.0.4
+                     , shade >= 0.1.1.1
   default-language:    Haskell2010
 
 executable jlc
-  hs-source-dirs:      apps/compiler
+  hs-source-dirs:      apps/jlc
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
@@ -64,8 +69,8 @@ executable jlc
                      , optparse-applicative >= 0.13.2.0
   default-language:    Haskell2010
 
-executable javalette-parser
-  hs-source-dirs:      apps/parser
+executable jlp
+  hs-source-dirs:      apps/jlp
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base

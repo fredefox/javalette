@@ -77,11 +77,6 @@ lookupIdentErr i
   = fromMaybe (error "Var not found - typechecker broken")
   <$> lookupIdent i
 
-lookupLValErr :: LValue -> R LValue
-lookupLValErr lv = case lv of
-  LIdent i -> LIdent <$> lookupIdentErr i
-  LIndexed i idx -> LIndexed <$> lookupIdentErr i <*> rIndexM idx
-
 pushScope :: R ()
 pushScope = modifyVars push
   where
@@ -119,7 +114,7 @@ rStmtM s = case s of
   Empty -> return Empty
   BStmt blk -> BStmt <$> rBlkM blk
   Decl t is -> Decl t <$> mapM rItemM is
-  Ass i e -> Ass <$> lookupLValErr i <*> rExprM e
+  Ass i e -> Ass <$> rExprM i <*> rExprM e
   Incr i -> Incr <$> lookupIdentErr i
   Decr i -> Incr <$> lookupIdentErr i
   Ret e -> Ret <$> rExprM e

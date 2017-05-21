@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {- | Typechecking of the Javalette programming language -}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
@@ -10,12 +11,16 @@ module Javalette.TypeChecking
   , Infer(..)
   , staticControlFlowCheck
   , typecheck
+  , LValue(..)
+  , lvalue
+  , unlvalue
   ) where
 
 import Data.Map (Map)
 import qualified Data.Map as M
 import Control.Monad.Except
 import Control.Monad.State
+import Control.Exception
 
 import Javalette.Syntax
 import qualified Javalette.Syntax as AST
@@ -40,6 +45,9 @@ data TypeCheckingError
   | Undef
   | GenericError String
   deriving (Show)
+
+instance Exception TypeCheckingError where
+  displayException = prettyShow
 
 instance Pretty TypeCheckingError where
   pPrint err = case err of
@@ -266,12 +274,12 @@ typecheckStmt t s = case s of
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Plus  (one t')))
+    typecheckStmt t (Ass (EVar i) (EAdd (EVar i) Plus  (one t')))
   Decr i         -> do
     t' <- lookupTypeVar i
     unless (isNumeric t')
       $ throwError TypeMismatch
-    typecheckStmt t (Ass (LIdent i) (EAdd (EVar i) Minus (one t')))
+    typecheckStmt t (Ass (EVar  i) (EAdd (EVar i) Minus (one t')))
   Ret e          -> do
     (e', t') <- infer e
     unless (t == t')
@@ -323,19 +331,57 @@ desugarFor t0 i e s0 = do
         ]
         ))
 
+-- | An expression representing an lvalue. Lvalues are either identifiers or
+-- array-index expressions.
+data LValue = LValue Ident [Index]
 
-lookupTypeLValue :: LValue -> TypeChecker (Type, LValue)
-lookupTypeLValue lv = case lv of
-  LIdent i -> do
-    t <- lookupTypeVar i
-    return (t, lv)
-  LIndexed i idx -> do
-    t <- lookupTypeVar i
-    (idx', tp) <- infer idx
-    unless (tp == Int) $ throwError $ GenericError "Indexes must be integers"
-    case t of
-      Array t' -> return (t', LIndexed i idx')
-      _     -> throwError (GenericError "Cannot index into non-array type")
+-- | Convert an expression to an lvalue.
+lvalueErr :: Expr -> TypeChecker LValue
+lvalueErr e = case e of
+  EVar i -> return (LValue i [])
+  EIndex e' idx -> addIndex idx <$> lvalueErr e'
+  _ -> throwError $ GenericError "Not an l-value"
+
+-- | Non-total version of 'lvalueErr'.
+lvalue :: Expr -> LValue
+lvalue e = case e of
+  EVar i -> LValue i []
+  EIndex e' idx -> addIndex idx (lvalue e')
+  _ -> error "IMPOSSIBLE - removed by typechecker"
+
+addIndex :: Index -> LValue -> LValue
+addIndex idx (LValue i idxs) = LValue i $ idxs ++ [idx]
+
+unlvalue :: LValue -> Expr
+unlvalue (LValue i idxs) = foldl EIndex (EVar i) idxs
+
+lookupTypeLValue :: Expr -> TypeChecker (Type, Expr)
+lookupTypeLValue e = do
+  lval <- lvalueErr e
+  (t, lval') <- lookupTypeLValue' lval
+  return (t, unlvalue lval')
+
+lookupTypeLValue' :: LValue -> TypeChecker (Type, LValue)
+lookupTypeLValue' lv@(LValue i idxs) =
+  case idxs of
+    [] -> do
+      t <- lookupTypeVar i
+      return (t, lv)
+    _ -> do
+      t <- lookupTypeVar i
+      (idxs', tps) <- unzip <$> mapM infer idxs
+      unless (all (== Int) tps) $ throwError $ GenericError "Indexes must be integers"
+      case intoArray (length idxs) t of
+        Just t' -> return (t', LValue i idxs')
+        Nothing -> throwError (GenericError "Cannot index into non-array type")
+
+-- | `intoArray n` gets the type nested at level `n` inside a multidimensional
+-- array.
+intoArray :: Int -> Type -> Maybe Type
+intoArray n (Array t)
+  | n > 1     = intoArray (n - 1) t
+  | otherwise = Just t
+intoArray _ _ = Nothing
 
 instance TypeCheck Index where
 instance Infer Index where
@@ -445,7 +491,11 @@ typecheckConstructor c = case c of
     (e', t') <- infer e
     unless (t' == Int)
       $ throwError (GenericError "Length of array must be an integer")
-    return (ArrayCon tp e')
+    tp' <- case tp of
+      TypeCon{} -> return tp
+      ArrayCon{} -> typecheckConstructor tp
+    return (ArrayCon tp' e')
+  TypeCon{} -> throwError $ GenericError "Can only create objects"
 
 instance TypeCheck Expr where
 instance Infer Expr where
@@ -601,7 +651,7 @@ staticControlFlowCheckDef (FnDef t _ args blk) = withNewScope $ do
     Always t' -> when (t /= t')
       $ throwError $ GenericError "Inferred type doesn't match expected type"
     _         -> when (t /= AST.Void)
-      $ throwError $ GenericError "Control-flow is out of whack yo!"
+      $ throwError $ GenericError "Not all paths return a value."
 
 -- | Infers the return-type of a statement and return how "often" we see this
 -- type. The frequency with which we see the type can be seen as wether or not
@@ -649,7 +699,7 @@ inferStmt s = case s of
   For{} -> return Never
 
 -- TODO Unimplemented.
-assign :: LValue -> Expr -> TypeChecker ()
+assign :: Expr -> Expr -> TypeChecker ()
 assign _ _ = return ()
 incr, decr :: Ident -> TypeChecker ()
 incr _ = return ()

@@ -29,7 +29,7 @@ transStmt x = case x of
   Empty -> failure x
   BStmt blk -> failure x
   Decl type_ items -> failure x
-  Ass lvalue expr -> failure x
+  Ass expr1 expr2 -> failure x
   Incr ident -> failure x
   Decr ident -> failure x
   Ret expr -> failure x
@@ -46,11 +46,8 @@ transItem x = case x of
   InitObj ident constructor -> failure x
 transConstructor :: Constructor -> Result
 transConstructor x = case x of
-  ArrayCon type_ expr -> failure x
-transLValue :: LValue -> Result
-transLValue x = case x of
-  LIdent ident -> failure x
-  LIndexed ident index -> failure x
+  TypeCon type_ -> failure x
+  ArrayCon constructor expr -> failure x
 transIndex :: Index -> Result
 transIndex x = case x of
   Indx expr -> failure x

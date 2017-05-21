@@ -1,24 +1,16 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ExistentialQuantification #-}
 module Javalette.Backend.Internals
   ( Backend(..)
-  , Backend'(..)
-  , mkBackend
   ) where
 
-import Options.Applicative.Types
+import Options.Applicative
 
 import Javalette.Syntax as AST
 
-data Backend where
-  Backend :: Backend' opts -> Backend
-
-data Backend' opts = Backend'
+-- | A javalette backend. 'opts' is existentially quantified to allow differnt
+-- backends to use different options.
+data Backend = forall opts . Backend
   { runBackend     :: opts -> FilePath -> AST.Prog -> IO ()
   , backendOptions :: Parser opts
+  , enable         :: Mod FlagFields Bool
   }
-
--- | Provides a clean interface to creating a publicly consumable backend, but
--- we lose the nicety of having record syntax
-mkBackend
-  :: (opts -> FilePath -> Prog -> IO ()) -> Parser opts -> Backend
-mkBackend run opts = Backend (Backend' run opts)
